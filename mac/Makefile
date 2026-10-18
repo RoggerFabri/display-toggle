@@ -1,6 +1,6 @@
 BINARY     = display-toggle
 SOURCES    = display-toggle.swift peer-logic.swift peer-link.swift update-logic.swift updater.swift
-# Release builds pass VERSION=X.Y.Z; anything else is a dev build (no automatic update checks).
+# Release builds pass VERSION=X.Y.Z; anything else is a dev build, older than every release.
 VERSION   ?= 0.0.0-dev
 GEN        = gen
 GEN_PLIST  = $(GEN)/Info.plist

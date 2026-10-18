@@ -12,7 +12,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>display-toggle.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <!-- Release builds pass -p:Version=X.Y.Z; anything with a '-' suffix is a dev build (no auto update checks). -->
+    <!-- Release builds pass -p:Version=X.Y.Z; anything with a '-' suffix is a dev build, older than every release. -->
     <Version>0.0.0-dev</Version>
   </PropertyGroup>
 

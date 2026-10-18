@@ -90,12 +90,14 @@ with **Check for updates**). They only trust a manifest whose signature verifies
 on their own: a newer version shows as **Update available: vX.Y.Z — Install and restart** at the top
 of the menu, plus one notification. Clicking it downloads the asset, checks its size and hash
 against the signed manifest, replaces the installed app and restarts it; on any failure the current
-install is left as it was. Local builds (`0.0.0-dev`) don't check automatically.
+install is left as it was. Automatic checks run for the installed copy whatever its version: after
+`make install` (which builds `0.0.0-dev`, older than every release) the app checks by itself and is
+offered the latest release. A build run from a checkout (`make run`) never checks automatically.
 
 The **first install is still manual**: `make install` from a checkout (above), which also sets up
-login autostart. Or download the asset from the latest release and put it where `make install`
-would (Windows: unzip into `%LOCALAPPDATA%\display-toggle`; Mac: `/usr/local/bin/display-toggle`),
-since only that installed copy offers updates. On the Mac, expect macOS to ask for Local Network
+login autostart, or the asset from the latest release put where `make install` would put it
+(Windows: unzip into `%LOCALAPPDATA%\display-toggle`; Mac: `/usr/local/bin/display-toggle`), since
+only that installed copy checks for and installs updates. On the Mac, expect macOS to ask for Local Network
 access again after an update.
 
 To cut a **minor or major** release (or re-release without app changes): **Actions → release →

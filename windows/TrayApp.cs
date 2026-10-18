@@ -98,10 +98,11 @@ internal sealed class TrayApp : ApplicationContext
         _settleRefresh.Tick += (_, _) => { _settleRefresh.Stop(); RefreshTray(); };
         _iconDebounce.Tick += (_, _) => OnIconDebounce();
 
-        // Automatic update checks: once shortly after start, then every 6 h — never for dev builds
-        // ("Check for updates" still works there).
+        // Automatic update checks: once shortly after start, then every 6 h — only for the installed
+        // copy, whatever its version (`make install` builds 0.0.0-dev, which every release is newer
+        // than). A build run from the checkout never checks by itself; "Check for updates" still works.
         _updateTimer.Tick += (_, _) => { _updateTimer.Interval = UpdateCheckEveryMs; CheckForUpdates(manual: false); };
-        if (!UpdateLogic.CurrentVersion.IsDev) _updateTimer.Start();
+        if (IsInstalledCopy) _updateTimer.Start();
 
         // This app assumes a laptop (internal panel + external). Warn once if there's no built-in
         // display, since "internal only" would then blank every screen.
@@ -326,7 +327,8 @@ internal sealed class TrayApp : ApplicationContext
             case UpdateCheckResult.Kind.Available:
                 var m = result.Manifest!;
                 _update = m;
-                // One notification per version, unless the user asked just now.
+                // One notification per version, unless the user asked just now. Set in memory first: a
+                // ReadOnly config doesn't save, but this session still won't repeat the balloon.
                 if (report || _settings.LastNotifiedVersion != m.Version.ToString())
                 {
                     _settings.LastNotifiedVersion = m.Version.ToString();

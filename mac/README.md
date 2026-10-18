@@ -61,9 +61,12 @@ that starts the app at login. launchd restarts it if it crashes, but not after y
 
 ## Updates
 
-The menu shows the running version (*Version X.Y.Z*; a local build says `0.0.0-dev`). Released
-builds look for a new release on GitHub a minute after launch and then every 6 hours; *Check for
-updates* checks on demand (dev builds included) and says what it found. Nothing installs on its own.
+The menu shows the running version (*Version X.Y.Z*; a local build says `0.0.0-dev`). The installed
+copy looks for a new release on GitHub a minute after launch and then every 6 hours, whatever its
+version: after `sudo make install` (a `0.0.0-dev` build, older than every release) it checks by itself
+and is offered the latest release. A build run from `mac/` (`make run`) never checks by itself.
+*Check for updates* checks on demand anywhere and says what it found. Nothing installs on its own.
+The first install is `sudo make install`, or the release binary put at `/usr/local/bin/display-toggle`.
 
 When a newer release is found, the menu gets a top line *Update available: vX.Y.Z — Install and
 restart*, and macOS shows one notification for that version (sent through `osascript`, so it may

@@ -218,6 +218,13 @@ func isInstalledLocation(_ resolvedPath: String) -> Bool {
     return resolvedPath.hasPrefix("/") && (dir as NSString).lastPathComponent == "bin"
 }
 
+/// Automatic update checks run for the installed copy whatever its version (`make install` builds
+/// 0.0.0-dev, which every release is newer than), and never for a build run from a checkout.
+/// "Check for updates" works everywhere.
+func runsAutomaticUpdateChecks(resolvedPath: String) -> Bool {
+    isInstalledLocation(resolvedPath)
+}
+
 /// The launch agent label `make install` registers.
 func launchAgentLabel(user: String) -> String { "com.\(user).display-toggle" }
 

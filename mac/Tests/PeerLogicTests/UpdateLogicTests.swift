@@ -244,6 +244,14 @@ private func manifest(version: String = "1.2.3", tag: String? = nil, extra: Stri
         #expect(!isInstalledLocation("bin/display-toggle"))
     }
 
+    @Test func automaticChecksFollowTheInstalledPathNotTheVersion() {
+        // `make install` builds 0.0.0-dev; the installed copy must still check by itself.
+        #expect(runsAutomaticUpdateChecks(resolvedPath: "/usr/local/bin/display-toggle"))
+        #expect(runsAutomaticUpdateChecks(resolvedPath: "/opt/homebrew/bin/display-toggle"))
+        #expect(!runsAutomaticUpdateChecks(resolvedPath: "/Users/me/src/display-toggle/mac/display-toggle"))
+        #expect(!runsAutomaticUpdateChecks(resolvedPath: "display-toggle"))
+    }
+
     @Test func launchAgentLabelMatchesMakefile() {
         #expect(launchAgentLabel(user: "jane") == "com.jane.display-toggle")
     }

@@ -22,6 +22,8 @@ final class Updater {
     private(set) var checking = false
     private(set) var installing = false
     private var reportNextCheck = false
+    /// "Install" was clicked while a check was running; install once it finishes.
+    private var installAfterCheck = false
     private var timer: DispatchSourceTimer?
 
     private let defaults: UserDefaults
@@ -30,8 +32,6 @@ final class Updater {
     init(defaults: UserDefaults) {
         self.defaults = defaults
     }
-
-    var isDevBuild: Bool { isDevVersion(currentVersion) }
 
     /// Resolved path of the running binary.
     var executablePath: String {
@@ -44,9 +44,10 @@ final class Updater {
 
     // MARK: Checking
 
-    /// Automatic checks: 60 s after launch, then every 6 h. Not for dev builds.
+    /// Automatic checks: 60 s after launch, then every 6 h — for the installed copy only, whatever
+    /// its version; a build run from the checkout never checks by itself.
     func startAutomaticChecks() {
-        guard !isDevBuild, timer == nil else { return }
+        guard runsAutomaticUpdateChecks(resolvedPath: executablePath), timer == nil else { return }
         let t = DispatchSource.makeTimerSource(queue: .main)
         t.schedule(deadline: .now() + 60, repeating: 6 * 60 * 60, leeway: .seconds(60))
         t.setEventHandler { [weak self] in self?.check(userInitiated: false) }
@@ -72,6 +73,11 @@ final class Updater {
         checking = false
         let report = reportNextCheck
         reportNextCheck = false
+        let queuedInstall = installAfterCheck
+        installAfterCheck = false
+        // After reporting: install whatever is available now (a failed check keeps the earlier
+        // release; an up-to-date result means there's nothing left to install).
+        defer { if queuedInstall { install() } }
         switch result {
         case .success(let m) where isNewerRelease(m.version, than: current) && m.asset == nil:
             // A release without a macOS build isn't an update for us.
@@ -136,7 +142,9 @@ final class Updater {
 
     /// Download, verify, replace and restart. Only ever runs from the user's click.
     func install() {
-        guard let m = available, !installing, !checking else { return }
+        guard let m = available, !installing else { return }
+        // A check is running (e.g. the automatic one): don't drop the click, run it when that's done.
+        guard !checking else { installAfterCheck = true; return }
         guard canInstall else { NSWorkspace.shared.open(releasePageURL(m)); return }
         guard let asset = m.asset, let url = assetDownloadURL(tag: m.tag, asset: asset) else {
             alert("Couldn't install the update", describe(UpdateError.missingAsset))
@@ -219,8 +227,16 @@ final class Updater {
             // its new instance loses the single-instance lock to us, so fall through and hand over.
             let r = runTool("/bin/launchctl", ["kickstart", "-k", service], timeout: 30)
             log.info("launchctl kickstart returned \(r.status): \(r.output, privacy: .public)")
+            if r.status != 0 {
+                // Exit non-zero instead: the agent's KeepAlive {SuccessfulExit: false} restarts us
+                // into the new binary. A waiter spawned here would die with us when launchd reaps
+                // the job, and exiting 0 would leave the app stopped.
+                log.error("kickstart failed; exiting so launchd restarts the new binary")
+                DispatchQueue.main.async { exit(1) }
+                return
+            }
         }
-        // Not under the launch agent (or kickstart failed): start the new copy once we've exited —
+        // Not under the launch agent (or kickstart left us running): start the new copy once we've exited —
         // it would otherwise lose the single-instance lock race and exit at once.
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")

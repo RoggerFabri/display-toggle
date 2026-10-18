@@ -112,11 +112,14 @@ the temp folder. It logs to `%TEMP%\display-toggle-update.log`. Config in `%APPD
 touched. If any step before the hand-off fails, the app keeps running the current version and
 shows why.
 
-Self-update only applies to the copy `make install` put in `%LOCALAPPDATA%\display-toggle`. A build
-run from elsewhere (`make run`, `bin\…`) only says that an update exists; run `make install` from a
-newer checkout instead. Local builds report version `0.0.0-dev` and make no automatic checks
-(*Check for updates* still works); release builds get their version from
-`dotnet publish -p:Version=X.Y.Z`. `display-toggle.exe --version` prints it.
+Self-update only applies to the copy `make install` put in `%LOCALAPPDATA%\display-toggle` (the
+first install is `make install`, or the release zip unpacked there). Only that installed copy checks
+automatically, whatever its version: `make install` builds `0.0.0-dev`, which is older than every
+release, so after `make install` the app checks by itself and is offered the latest release. A
+build run from elsewhere (`make run`, `bin\…`) never checks by itself; *Check for updates* still
+works there, and only says that an update exists (run `make install` from a newer checkout
+instead). A release without a Windows download counts as "up to date". Release builds get their
+version from `dotnet publish -p:Version=X.Y.Z`; `display-toggle.exe --version` prints it.
 
 ## Autostart at login
 
