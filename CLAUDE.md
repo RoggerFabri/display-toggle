@@ -81,7 +81,8 @@ and, on a push, releases only if app files changed since that tag (`mac/*.swift`
 `build-macos` (`make dist VERSION=…`, a universal tarball) run the tests and build the assets;
 `publish` writes `manifest.json` with `.github/scripts/make-manifest.py` (compact JSON, fixed key
 order, no trailing newline: version, tag, published, notes_url, and per asset name/sha256/size), signs
-those exact bytes with the `RELEASE_SIGNING_KEY` secret (ECDSA P-256/SHA-256, raw DER signature →
+those exact bytes with `RELEASE_SIGNING_KEY` (a secret of the `release` environment, which only `main`
+can deploy to; the publish job is the only one that uses it) (ECDSA P-256/SHA-256, raw DER signature →
 `manifest.json.sig`), verifies it against `.github/release-signing.pub.pem` (the same public key the
 apps embed), and runs `gh release create` with the two assets + manifest + signature. The apps fetch
 `releases/latest/download/manifest.json(.sig)` and verify the signature before parsing anything.

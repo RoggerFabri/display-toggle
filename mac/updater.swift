@@ -80,11 +80,11 @@ final class Updater {
         defer { if queuedInstall { install() } }
         switch result {
         case .success(let m) where isNewerRelease(m.version, than: current) && m.asset == nil:
-            // A release without a macOS build isn't an update for us.
+            // A release without a macOS build isn't an update for us: up to date, like Windows.
             available = nil
-            log.error("release \(m.version, privacy: .public) has no macOS asset")
+            log.info("release \(m.version, privacy: .public) has no macOS asset; up to date")
             onChange?()
-            if report { alert("Couldn't check for updates", describe(UpdateError.missingAsset)) }
+            if report { alert("Display Toggle is up to date", "Version \(current) is the latest macOS release.") }
         case .success(let m) where isNewerRelease(m.version, than: current):
             available = m
             log.info("update available: \(m.version, privacy: .public)")

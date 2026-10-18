@@ -154,6 +154,9 @@ jobs:
   publish:
     needs: [plan, build-windows, build-macos]
     runs-on: ubuntu-latest
+    # RELEASE_SIGNING_KEY is a secret of this environment, which only main may deploy to, so no
+    # workflow on another branch can read it.
+    environment: release
     permissions:
       contents: write
     env:

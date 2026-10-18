@@ -9,7 +9,7 @@ import Foundation
 enum Release {
     /// SubjectPublicKeyInfo (DER, base64) of the key CI signs `manifest.json` with.
     static let publicKeyBase64 =
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5xd31x3RYUrMiD/ld6+vIkio1hh7R8fu6XABL+jGXPZE3wAiAF5U5ZcvOTAcozHlDUc6VFFaPt7e1uVFK9a0zg=="
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4jcwU42Q5tlgqeX8oyeLCcmTs2FPxiKUiAeYjEkbjhrQC+opSQ6cTAfaysybeCWv+ffH/S7gSdyCvzUKeps1GA=="
     static var publicKey: Data { Data(base64Encoded: publicKeyBase64)! }
 
     static let manifestURL =

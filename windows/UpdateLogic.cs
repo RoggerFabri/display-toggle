@@ -57,7 +57,7 @@ public static class UpdateLogic
 {
     /// <summary>Release signing key (SubjectPublicKeyInfo DER, base64). CI signs manifest.json with its private half.</summary>
     public const string ReleasePublicKey =
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5xd31x3RYUrMiD/ld6+vIkio1hh7R8fu6XABL+jGXPZE3wAiAF5U5ZcvOTAcozHlDUc6VFFaPt7e1uVFK9a0zg==";
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4jcwU42Q5tlgqeX8oyeLCcmTs2FPxiKUiAeYjEkbjhrQC+opSQ6cTAfaysybeCWv+ffH/S7gSdyCvzUKeps1GA==";
 
     public const string WindowsAssetKey = "windows-x64";
     public const long MaxAssetBytes = 100L * 1024 * 1024;
