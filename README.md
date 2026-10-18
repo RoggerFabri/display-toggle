@@ -77,6 +77,30 @@ update both together.
 The Windows toggle switches the display topology (extend ⇄ internal-only, the same as Win+P) via
 the CCD API, so it's built for a laptop with an internal panel plus the shared external monitor.
 
+## Releases and updates
+
+Releases are automatic: every push to `main` that changes app code (the Mac sources and build
+files, or `windows/` outside its tests and docs) publishes the next patch version as a
+[GitHub Release](https://github.com/RoggerFabri/display-toggle/releases) — a Windows zip, a
+universal macOS binary, and a `manifest.json` with each asset's SHA-256, **signed** with the
+release key both apps embed.
+
+Installed apps check for a new release a minute after start and then every 6 hours (or on demand
+with **Check for updates**). They only trust a manifest whose signature verifies, and never update
+on their own: a newer version shows as **Update available: vX.Y.Z — Install and restart** at the top
+of the menu, plus one notification. Clicking it downloads the asset, checks its size and hash
+against the signed manifest, replaces the installed app and restarts it; on any failure the current
+install is left as it was. Local builds (`0.0.0-dev`) don't check automatically.
+
+The **first install is still manual**: `make install` from a checkout (above), which also sets up
+login autostart. Or download the asset from the latest release and put it where `make install`
+would (Windows: unzip into `%LOCALAPPDATA%\display-toggle`; Mac: `/usr/local/bin/display-toggle`),
+since only that installed copy offers updates. On the Mac, expect macOS to ask for Local Network
+access again after an update.
+
+To cut a **minor or major** release (or re-release without app changes): **Actions → release →
+Run workflow** on `main`, and pick the **bump** (`patch` / `minor` / `major`).
+
 ## Pairing
 
 1. Run the app on both machines.

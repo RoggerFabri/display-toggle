@@ -3,3 +3,4 @@
 /windows/bin
 /windows/obj
 /mac/.build
+__pycache__/

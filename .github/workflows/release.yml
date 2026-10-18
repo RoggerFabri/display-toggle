@@ -1,0 +1,197 @@
+name: release
+
+# Cuts a signed GitHub Release that the apps' update check picks up (releases/latest/download/
+# manifest.json + manifest.json.sig). A push to main releases the next patch version when app code
+# changed since the last v* tag; "Run workflow" releases a patch/minor/major bump unconditionally.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: read
+
+# One release at a time, never cancelled half-way (the next run plans from the tag this one makes).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # all history and tags: the latest v* tag and the diff since it
+      - name: Decide whether to release, and the version
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BUMP: ${{ inputs.bump }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" != refs/heads/main ]; then
+            echo "::error::releases are only cut from main (got $REF)"
+            exit 1
+          fi
+          [ "$EVENT" = workflow_dispatch ] || BUMP="patch"
+
+          latest=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          if [ -z "$latest" ]; then
+            echo "No v* tag yet: first release"
+            release=true
+            version=1.0.0
+          else
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            case "$BUMP" in
+              major) version="$((major + 1)).0.0" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              *)     version="$major.$minor.$((patch + 1))" ;;
+            esac
+            if [ "$EVENT" = workflow_dispatch ]; then
+              release=true
+            else
+              # App files only: the Mac sources and build inputs, and windows/ minus its tests and docs.
+              # (mac/Package.swift exists only for `make test`.)
+              changed=$(git diff --name-only "$latest" HEAD -- \
+                ':(glob)mac/*.swift' ':(exclude)mac/Package.swift' \
+                mac/Info.plist mac/Makefile mac/launch-agent.plist \
+                ':(glob)windows/**' ':(glob,exclude)windows/DisplayToggle.Tests/**' ':(glob,exclude)**/*.md')
+              if [ -n "$changed" ]; then
+                echo "App files changed since $latest:"
+                echo "$changed"
+                release=true
+              else
+                echo "No app files changed since $latest: nothing to release"
+                release=false
+              fi
+            fi
+          fi
+
+          if [ "$release" = true ] && git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "::error::tag v$version already exists"
+            exit 1
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release version=$version (latest tag: ${latest:-none}, bump: $BUMP)"
+
+  build-windows:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '8.0.x'
+      - name: Unit tests
+        working-directory: windows
+        run: dotnet test DisplayToggle.Tests -c Release
+      - name: Publish and zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pub = Join-Path $env:RUNNER_TEMP 'publish'
+          dotnet publish windows/DisplayToggle.csproj -c Release -r win-x64 --self-contained false "-p:Version=$env:VERSION" -o $pub
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+          $exe = Join-Path $pub 'display-toggle.exe'
+          $stamped = (Get-Item $exe).VersionInfo.ProductVersion -replace '\+.*$', ''
+          if ($stamped -ne $env:VERSION) { throw "display-toggle.exe reports version '$stamped', expected '$env:VERSION'" }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          # The publish dir's files at the zip root: the same layout `make install` puts in %LOCALAPPDATA%.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($pub, (Join-Path $PWD 'dist/display-toggle-windows-x64.zip'))
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: dist/display-toggle-windows-x64.zip
+          if-no-files-found: error
+
+  build-macos:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        working-directory: mac
+        run: make test
+      - name: Build universal binary tarball
+        working-directory: mac
+        run: make dist VERSION="$VERSION"
+      - name: Check the tarball
+        run: |
+          set -euo pipefail
+          tarball=mac/dist/display-toggle-macos.tar.gz
+          [ "$(tar -tzf "$tarball")" = display-toggle ] || { echo "::error::$tarball must hold exactly one file, display-toggle"; exit 1; }
+          dir=$(mktemp -d)
+          tar -xzf "$tarball" -C "$dir"
+          archs=$(lipo -archs "$dir/display-toggle")
+          case " $archs " in *" arm64 "*) ;; *) echo "::error::no arm64 slice ($archs)"; exit 1 ;; esac
+          case " $archs " in *" x86_64 "*) ;; *) echo "::error::no x86_64 slice ($archs)"; exit 1 ;; esac
+          codesign --verify "$dir/display-toggle"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: mac/dist/display-toggle-macos.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [plan, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write manifest.json
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/make-manifest.py --version "$VERSION" --tag "v$VERSION" \
+            --out dist/manifest.json \
+            dist/display-toggle-windows-x64.zip dist/display-toggle-macos.tar.gz
+          cat dist/manifest.json; echo
+      - name: Sign manifest.json
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then echo "::error::RELEASE_SIGNING_KEY is not set"; exit 1; fi
+          key="$RUNNER_TEMP/release-signing-key.pem"
+          trap 'rm -f "$key"' EXIT
+          (umask 077; printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key")
+          chmod 600 "$key"
+          openssl dgst -sha256 -sign "$key" -out dist/manifest.json.sig dist/manifest.json
+      - name: Verify the signature with the release public key
+        # The key the apps embed (.github/release-signing.pub.pem, SPKI). A secret that doesn't match it
+        # would publish a release no app accepts, so fail here instead.
+        run: openssl dgst -sha256 -verify .github/release-signing.pub.pem -signature dist/manifest.json.sig dist/manifest.json
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes \
+            dist/display-toggle-windows-x64.zip dist/display-toggle-macos.tar.gz \
+            dist/manifest.json dist/manifest.json.sig
