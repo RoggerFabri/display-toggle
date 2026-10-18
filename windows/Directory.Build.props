@@ -1,0 +1,7 @@
+<Project>
+  <!-- Lets the projects restore/build on Linux or macOS too: GitHub's automatic dependency
+       submission restores them on a Linux runner (NETSDK1100 otherwise). No effect on Windows. -->
+  <PropertyGroup>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+</Project>

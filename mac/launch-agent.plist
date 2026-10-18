@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>DISPLAY_TOGGLE_LABEL</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>DISPLAY_TOGGLE_BINPATH</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restart after a crash, but not after Quit (a clean exit 0). -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+</dict>
+</plist>

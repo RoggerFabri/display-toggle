@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded into the binary's __TEXT,__info_plist section by the Makefile. Declares the
+     Bonjour service type and Local Network usage needed for peer discovery (macOS 15+).
+     CFBundleIdentifier must differ from the "com.display-toggle" defaults suite, or
+     UserDefaults(suiteName:) returns nil. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.display-toggle.app</string>
+	<key>CFBundleName</key>
+	<string>Display Toggle</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Display Toggle finds and connects to its peer on the other computer that shares your monitor.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_display-toggle._tcp</string>
+	</array>
+</dict>
+</plist>

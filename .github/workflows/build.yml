@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches: ['**']   # trunk-based, no PRs: check feature branches on every push too
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build Windows tray app
+        working-directory: windows
+        run: dotnet build -c Release
+      - name: Unit tests (peer discovery logic)
+        working-directory: windows
+        run: dotnet test DisplayToggle.Tests -c Release
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build macOS menu-bar app
+        working-directory: mac
+        run: make build
+      - name: Unit tests (peer discovery logic)
+        working-directory: mac
+        run: make test
+
+  # Merge a Dependabot PR once both builds pass, major bumps included: the only dependencies are CI
+  # actions and test-only packages, so these builds are the whole safety net. Done here rather than
+  # with GitHub auto-merge, which only waits for checks that branch protection marks as required.
+  dependabot-merge:
+    needs: [windows, macos]
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Squash-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge "$PR" --squash --delete-branch

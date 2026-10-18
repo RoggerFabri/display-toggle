@@ -1,0 +1,33 @@
+# Version-update PRs, monthly, one grouped PR per ecosystem. Security-fix PRs for known
+# vulnerabilities come separately (Dependabot security updates, enabled in the repo settings).
+version: 2
+updates:
+  # Actions used by .github/workflows (a Node 20 deprecation is what an outdated one looks like).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Windows: only the test project has packages (xunit, the test SDK); the app references none.
+  - package-ecosystem: nuget
+    directories:
+      - /windows
+      - /windows/DisplayToggle.Tests
+    schedule:
+      interval: monthly
+    groups:
+      nuget:
+        patterns: ["*"]
+
+  # Mac: Package.swift exists only for `make test` and has no dependencies today (the test
+  # framework ships with the toolchain); listed so any added later get update PRs too.
+  - package-ecosystem: swift
+    directory: /mac
+    schedule:
+      interval: monthly
+    groups:
+      swift:
+        patterns: ["*"]
