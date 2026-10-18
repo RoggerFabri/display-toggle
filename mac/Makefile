@@ -22,18 +22,19 @@ build: $(BINARY)
 
 # Info.plist is embedded (no .app bundle) so macOS sees the Bonjour / Local Network declarations.
 # A generated copy carries CFBundleShortVersionString = $(VERSION); the tracked file stays as is.
-$(BINARY): $(SOURCES) $(GEN_PLIST)
+# A VERSION different from the last build's forces both the plist and the link (make's timestamps
+# alone can't tell: they're whole seconds, and the plist may be regenerated in the link's second).
+VERSION_CHANGED := $(if $(filter $(VERSION),$(shell cat $(GEN)/version 2>/dev/null)),,FORCE)
+
+$(BINARY): $(SOURCES) $(GEN_PLIST) $(VERSION_CHANGED)
 	swiftc $(SOURCES) -o $(BINARY) $(EMBED)
 
-# Rewritten only when VERSION changes, so a different VERSION relinks and the same one doesn't.
-$(GEN)/version: FORCE
-	@mkdir -p $(GEN)
-	@echo '$(VERSION)' | cmp -s - $@ || echo '$(VERSION)' > $@
-
-$(GEN_PLIST): Info.plist $(GEN)/version
+$(GEN_PLIST): Info.plist $(VERSION_CHANGED)
+	mkdir -p $(GEN)
 	cp Info.plist $@
 	plutil -replace CFBundleShortVersionString -string '$(VERSION)' $@
 	plutil -lint $@
+	echo '$(VERSION)' > $(GEN)/version
 
 # Release asset: a universal (arm64 + x86_64, macOS 13+) ad-hoc signed binary, alone in a tar.gz.
 #   make dist VERSION=X.Y.Z  →  dist/display-toggle-macos.tar.gz
