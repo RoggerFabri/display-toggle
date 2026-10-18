@@ -64,6 +64,21 @@ re-added on a session switch (RDP/unlock) or when the tray icon size changes (a 
 `dotnet test` on `windows-latest`, and `make build` + `make test` (swiftc + embedded Info.plist, then the
 Swift Testing tests) on `macos-latest`.
 
+**Releases:** `.github/workflows/release.yml` runs on every push to `main` (and *Run workflow* with a
+`bump` input: patch/minor/major). Its `plan` job bumps the latest `vX.Y.Z` tag (none yet → `v1.0.0`)
+and, on a push, releases only if app files changed since that tag (`mac/*.swift` except
+`Package.swift`, `mac/Info.plist`/`Makefile`/`launch-agent.plist`, `windows/**` except
+`DisplayToggle.Tests/` and `*.md`). `build-windows` (`dotnet publish -p:Version=…`, zipped flat) and
+`build-macos` (`make dist VERSION=…`, a universal tarball) run the tests and build the assets;
+`publish` writes `manifest.json` with `.github/scripts/make-manifest.py` (compact JSON, fixed key
+order, no trailing newline: version, tag, published, notes_url, and per asset name/sha256/size), signs
+those exact bytes with the `RELEASE_SIGNING_KEY` secret (ECDSA P-256/SHA-256, raw DER signature →
+`manifest.json.sig`), verifies it against `.github/release-signing.pub.pem` (the same public key the
+apps embed), and runs `gh release create` with the two assets + manifest + signature. The apps fetch
+`releases/latest/download/manifest.json(.sig)` and verify the signature before parsing anything.
+Changing the manifest format or the key means changing both apps and their shared test vector.
+`build.yml`'s `release-tooling` job runs the `make-manifest.py` tests on every branch.
+
 ## Build
 
 macOS — run from `mac/`:

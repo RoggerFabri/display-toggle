@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only by default; only dependabot-merge below gets write access.
+permissions:
+  contents: read
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -32,11 +36,22 @@ jobs:
         working-directory: mac
         run: make test
 
-  # Merge a Dependabot PR once both builds pass, major bumps included: the only dependencies are CI
+  # The release workflow's manifest tooling (release.yml only runs on main, so test it here).
+  release-tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: make-manifest.py tests
+        run: python3 -m unittest discover -s .github/scripts -v
+      - name: Release public key is a P-256 SPKI
+        run: |
+          openssl pkey -pubin -in .github/release-signing.pub.pem -noout -text | grep -q 'NIST CURVE: P-256'
+
+  # Merge a Dependabot PR once the builds pass, major bumps included: the only dependencies are CI
   # actions and test-only packages, so these builds are the whole safety net. Done here rather than
   # with GitHub auto-merge, which only waits for checks that branch protection marks as required.
   dependabot-merge:
-    needs: [windows, macos]
+    needs: [windows, macos, release-tooling]
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
