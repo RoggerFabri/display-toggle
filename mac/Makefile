@@ -1,5 +1,11 @@
 BINARY     = display-toggle
-SOURCES    = display-toggle.swift peer-logic.swift peer-link.swift
+SOURCES    = display-toggle.swift peer-logic.swift peer-link.swift update-logic.swift updater.swift
+# Release builds pass VERSION=X.Y.Z; anything else is a dev build (no automatic update checks).
+VERSION   ?= 0.0.0-dev
+GEN        = gen
+GEN_PLIST  = $(GEN)/Info.plist
+EMBED      = -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker $(GEN_PLIST)
+DIST_ARCHIVE = dist/display-toggle-macos.tar.gz
 PREFIX    ?= /usr/local
 BINPATH    = $(PREFIX)/bin/$(BINARY)
 LOCAL_USER := $(or $(SUDO_USER),$(shell whoami))
@@ -8,26 +14,52 @@ USER_HOME  := $(shell eval echo ~$(LOCAL_USER))
 LABEL      = com.$(LOCAL_USER).display-toggle
 PLIST      = $(USER_HOME)/Library/LaunchAgents/$(LABEL).plist
 
-.PHONY: all build clean install uninstall run test
+.PHONY: all build clean install uninstall run test dist FORCE
 
 all: build
 
 build: $(BINARY)
 
 # Info.plist is embedded (no .app bundle) so macOS sees the Bonjour / Local Network declarations.
-$(BINARY): $(SOURCES) Info.plist
-	swiftc $(SOURCES) -o $(BINARY) -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist
+# A generated copy carries CFBundleShortVersionString = $(VERSION); the tracked file stays as is.
+# A VERSION different from the last build's forces both the plist and the link (make's timestamps
+# alone can't tell: they're whole seconds, and the plist may be regenerated in the link's second).
+VERSION_CHANGED := $(if $(filter $(VERSION),$(shell cat $(GEN)/version 2>/dev/null)),,FORCE)
+
+$(BINARY): $(SOURCES) $(GEN_PLIST) $(VERSION_CHANGED)
+	swiftc $(SOURCES) -o $(BINARY) $(EMBED)
+
+$(GEN_PLIST): Info.plist $(VERSION_CHANGED)
+	mkdir -p $(GEN)
+	cp Info.plist $@
+	plutil -replace CFBundleShortVersionString -string '$(VERSION)' $@
+	plutil -lint $@
+	echo '$(VERSION)' > $(GEN)/version
+
+# Release asset: a universal (arm64 + x86_64, macOS 13+) ad-hoc signed binary, alone in a tar.gz.
+#   make dist VERSION=X.Y.Z  →  dist/display-toggle-macos.tar.gz
+dist: $(SOURCES) $(GEN_PLIST)
+	rm -rf $(GEN)/dist dist
+	mkdir -p $(GEN)/dist dist
+	swiftc $(SOURCES) -O -target arm64-apple-macos13.0 -o $(GEN)/dist/$(BINARY)-arm64 $(EMBED)
+	swiftc $(SOURCES) -O -target x86_64-apple-macos13.0 -o $(GEN)/dist/$(BINARY)-x86_64 $(EMBED)
+	lipo -create -output $(GEN)/dist/$(BINARY) $(GEN)/dist/$(BINARY)-arm64 $(GEN)/dist/$(BINARY)-x86_64
+	codesign --sign - --force $(GEN)/dist/$(BINARY)
+	COPYFILE_DISABLE=1 tar -czf $(DIST_ARCHIVE) -C $(GEN)/dist $(BINARY)
+	@echo "→ $(DIST_ARCHIVE) ($(VERSION), $$(lipo -archs $(GEN)/dist/$(BINARY)))"
+
+FORCE:
 
 clean:
-	rm -rf $(BINARY) .build
+	rm -rf $(BINARY) .build $(GEN) dist
 
-# Unit tests for peer-logic.swift (Swift Testing). SwiftPM is used for tests only.
+# Unit tests for peer-logic.swift + update-logic.swift (Swift Testing). SwiftPM is used for tests only.
 test:
 	swift test
 
 install: build
 	@# Under sudo the build above ran as root; hand the local binary back so a plain `make` can rebuild it.
-	-chown $(LOCAL_USER) $(BINARY)
+	-chown -R $(LOCAL_USER) $(BINARY) $(GEN)
 	install -d $(PREFIX)/bin
 	install -m 755 $(BINARY) $(BINPATH)
 	codesign --sign - --force $(BINPATH)

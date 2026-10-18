@@ -1,0 +1,3 @@
+# make build/dist outputs (generated Info.plist, release archive)
+/gen
+/dist

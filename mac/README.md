@@ -6,7 +6,7 @@ so the two share one physical monitor: see [`../PROTOCOL.md`](../PROTOCOL.md).
 
 - **Left-click** the menu-bar icon → toggle every external display on/off.
 - **Right-click** → a switch per external display (including ones that are currently off), this
-  Mac's IP, peer status, *Choose peer ▸*, and *Quit*.
+  Mac's IP, peer status, *Choose peer ▸*, the version, *Check for updates*, and *Quit*.
 - The icon is faded while the externals are off; a **green dot** means the peer is linked.
 
 Turning a display **off** drops its signal, so the shared monitor switches to the other machine's
@@ -58,6 +58,31 @@ secret* (it has one and this side doesn't).
 `sudo make install` registers a launch agent (`~/Library/LaunchAgents/com.<user>.display-toggle.plist`)
 that starts the app at login. launchd restarts it if it crashes, but not after you choose **Quit**.
 `sudo make uninstall` removes it.
+
+## Updates
+
+The menu shows the running version (*Version X.Y.Z*; a local build says `0.0.0-dev`). Released
+builds look for a new release on GitHub a minute after launch and then every 6 hours; *Check for
+updates* checks on demand (dev builds included) and says what it found. Nothing installs on its own.
+
+When a newer release is found, the menu gets a top line *Update available: vX.Y.Z — Install and
+restart*, and macOS shows one notification for that version (sent through `osascript`, so it may
+appear under *Script Editor*; a bare binary can't post its own notifications). Clicking the line
+downloads the macOS archive, checks it against the release's signed manifest (ECDSA P-256 signature,
+then size + SHA-256), makes sure the new binary starts and reports the expected version, then
+replaces the installed binary (asking for an administrator password when `/usr/local/bin` isn't
+writable) and restarts through the launch agent. If anything fails, the installed copy is left as
+it was and an alert says why.
+
+Only the installed copy (`…/bin/display-toggle`) updates itself. A build run from `mac/` points you
+to the release instead: update the checkout and run `sudo make install`.
+
+After an update macOS may ask again for **Local Network** access, because the replaced binary is
+ad-hoc signed and counts as a new app. Allow it, or the peer link stops working.
+
+Release builds: `make VERSION=X.Y.Z` stamps the version into the embedded Info.plist, and
+`make dist VERSION=X.Y.Z` builds the release asset `dist/display-toggle-macos.tar.gz` (a universal
+arm64 + x86_64 binary for macOS 13+, ad-hoc signed). `display-toggle --version` prints the version.
 
 ## Notes
 
