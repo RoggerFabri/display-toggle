@@ -73,6 +73,12 @@ final class Updater {
         let report = reportNextCheck
         reportNextCheck = false
         switch result {
+        case .success(let m) where isNewerRelease(m.version, than: current) && m.asset == nil:
+            // A release without a macOS build isn't an update for us.
+            available = nil
+            log.error("release \(m.version, privacy: .public) has no macOS asset")
+            onChange?()
+            if report { alert("Couldn't check for updates", describe(UpdateError.missingAsset)) }
         case .success(let m) where isNewerRelease(m.version, than: current):
             available = m
             log.info("update available: \(m.version, privacy: .public)")
@@ -95,10 +101,12 @@ final class Updater {
     private static func fetchLatestManifest() throws -> ReleaseManifest {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let limit = Int64(Release.maxManifestBytes)
-        let manifestFile = try download(Release.manifestURL, limit: limit, timeout: 30, to: dir.appendingPathComponent("manifest.json"))
-        let sigFile = try download(Release.signatureURL, limit: limit, timeout: 30, to: dir.appendingPathComponent("manifest.json.sig"))
+        // manifest + signature share one size budget.
+        let manifestFile = try download(Release.manifestURL, limit: Int64(Release.maxManifestBytes),
+                                        to: dir.appendingPathComponent("manifest.json"))
         let manifest = try Data(contentsOf: manifestFile)
+        let sigFile = try download(Release.signatureURL, limit: Int64(Release.maxManifestBytes - manifest.count),
+                                   to: dir.appendingPathComponent("manifest.json.sig"))
         let sig = try Data(contentsOf: sigFile)
         return try parseSignedManifest(manifest, signature: sig, publicKeyDER: Release.publicKey)
     }
@@ -130,7 +138,7 @@ final class Updater {
     func install() {
         guard let m = available, !installing, !checking else { return }
         guard canInstall else { NSWorkspace.shared.open(releasePageURL(m)); return }
-        guard let asset = m.assets[Release.macAssetKey], let url = assetDownloadURL(tag: m.tag, asset: asset) else {
+        guard let asset = m.asset, let url = assetDownloadURL(tag: m.tag, asset: asset) else {
             alert("Couldn't install the update", describe(UpdateError.missingAsset))
             return
         }
@@ -159,7 +167,7 @@ final class Updater {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // Download and check against the signed manifest.
-        let archive = try download(url, limit: asset.size, timeout: 300, to: dir.appendingPathComponent(asset.name))
+        let archive = try download(url, limit: asset.size, to: dir.appendingPathComponent(asset.name))
         let archived = try Data(contentsOf: archive, options: .mappedIfSafe)
         guard assetMatches(archived, asset) else {
             throw UpdateError.assetMismatch
@@ -290,14 +298,15 @@ private func runTool(_ path: String, _ args: [String], timeout: TimeInterval) ->
 }
 
 /// Downloads `url` to `destination` over HTTPS only (redirects too), failing on a non-200 status or
-/// once more than `limit` bytes arrive. Blocks the calling (non-main) queue until done.
-private func download(_ url: URL, limit: Int64, timeout: TimeInterval, to destination: URL) throws -> URL {
+/// once more than `limit` bytes arrive. Times out after 30 s without data (headers included), not
+/// on total duration (an hour is only a backstop). Blocks the calling (non-main) queue until done.
+private func download(_ url: URL, limit: Int64, to destination: URL) throws -> URL {
     let done = DispatchSemaphore(value: 0)
     var outcome: Result<URL, Error> = .failure(UpdateError.failed("download didn't finish"))
     let d = LimitedDownload(limit: limit, destination: destination) { outcome = $0; done.signal() }
     let config = URLSessionConfiguration.ephemeral
-    config.timeoutIntervalForRequest = 30
-    config.timeoutIntervalForResource = timeout
+    config.timeoutIntervalForRequest = 30      // idle: until the headers, then between reads
+    config.timeoutIntervalForResource = 3600
     config.requestCachePolicy = .reloadIgnoringLocalCacheData
     config.urlCache = nil
     let session = URLSession(configuration: config, delegate: d, delegateQueue: nil)

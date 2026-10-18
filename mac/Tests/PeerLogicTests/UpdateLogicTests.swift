@@ -60,12 +60,15 @@ private func manifest(version: String = "1.2.3", tag: String? = nil, extra: Stri
     }
 
     @Test func vectorParses() throws {
+        // No tag / published / notes_url and no macOS asset: still a valid manifest.
         let m = try parseSignedManifest(vectorManifest, signature: vectorSignature, publicKeyDER: vectorKey)
         #expect(m.version == "1.2.3")
         #expect(m.tag == "v1.2.3")
-        #expect(m.assets["windows-x64"] == ReleaseAsset(name: "display-toggle-windows-x64.zip",
-                                                       sha256: String(repeating: "0", count: 64), size: 1))
-        #expect(m.assets[Release.macAssetKey] == nil)
+        #expect(m.asset == nil)
+        let win = try parseSignedManifest(vectorManifest, signature: vectorSignature, publicKeyDER: vectorKey,
+                                          platform: "windows-x64")
+        #expect(win.asset == ReleaseAsset(name: "display-toggle-windows-x64.zip",
+                                          sha256: String(repeating: "0", count: 64), size: 1))
     }
 
     @Test func signatureIsCheckedBeforeParsing() {
@@ -94,11 +97,30 @@ private func manifest(version: String = "1.2.3", tag: String? = nil, extra: Stri
         let m = try signed(json)
         #expect(m.version == "1.4.0")
         #expect(m.tag == "v1.4.0")
-        #expect(m.assets["macos"] == ReleaseAsset(name: "display-toggle-macos.tar.gz", sha256: hashA, size: 456))
-        #expect(m.assets.count == 2)
+        #expect(m.asset == ReleaseAsset(name: "display-toggle-macos.tar.gz", sha256: hashA, size: 456))
         #expect(releasePageURL(m).absoluteString == "https://github.com/RoggerFabri/display-toggle/releases/tag/v1.4.0")
-        #expect(assetDownloadURL(tag: m.tag, asset: m.assets["macos"]!)?.absoluteString
+        #expect(assetDownloadURL(tag: m.tag, asset: m.asset!)?.absoluteString
                 == "https://github.com/RoggerFabri/display-toggle/releases/download/v1.4.0/display-toggle-macos.tar.gz")
+    }
+
+    @Test func otherPlatformsAreIgnored() throws {
+        let json = #"{"version":"1.2.3","assets":{"windows-x64":{"name":"../x","sha256":"zz","size":"big"},"#
+            + #""linux":7,"macos":{"name":"display-toggle-macos.tar.gz","sha256":"\#(hashA)","size":456}}}"#
+        #expect(try signed(json).asset?.size == 456)
+    }
+
+    @Test func missingOwnAssetParsesAsNone() throws {
+        let json = #"{"version":"1.2.3","assets":{"windows-x64":{"name":"a.zip","sha256":"\#(hashA)","size":1}}}"#
+        #expect(try signed(json).asset == nil)
+    }
+
+    @Test func malformedOwnAssetIsRejected() {
+        #expect(throws: UpdateError.badManifest("asset")) {
+            try signed(#"{"version":"1.2.3","assets":{"macos":{"name":"a.tar.gz","size":1}}}"#)
+        }
+        #expect(throws: UpdateError.badManifest("asset")) {
+            try signed(#"{"version":"1.2.3","assets":{"macos":"display-toggle-macos.tar.gz"}}"#)
+        }
     }
 
     @Test func unknownFieldsAreIgnored() throws {
@@ -144,9 +166,6 @@ private func manifest(version: String = "1.2.3", tag: String? = nil, extra: Stri
     @Test func missingFieldsAreRejected() {
         #expect(throws: (any Error).self) { try signed(#"{"version":"1.2.3"}"#) }
         #expect(throws: (any Error).self) { try signed(#"{"assets":{}}"#) }
-        #expect(throws: (any Error).self) {
-            try signed(#"{"version":"1.2.3","assets":{"macos":{"name":"a.tar.gz","size":1}}}"#)
-        }
         #expect(throws: (any Error).self) { try signed("[]") }
         #expect(throws: (any Error).self) { try signed("") }
     }

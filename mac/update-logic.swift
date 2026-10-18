@@ -90,7 +90,9 @@ struct ReleaseManifest: Equatable {
     let version: String
     let tag: String
     let notesURL: String?
-    let assets: [String: ReleaseAsset]
+    /// This platform's entry in `assets` (other platforms' entries are ignored). Nil when the
+    /// release has none — the caller treats that as "no update for this platform".
+    let asset: ReleaseAsset?
 }
 
 enum UpdateError: Error, Equatable, CustomStringConvertible {
@@ -128,11 +130,17 @@ private struct RawAsset: Decodable {
     let size: Int64
 }
 
+/// An `assets` entry that never fails to decode, so another platform's entry can't break ours.
+private struct LenientAsset: Decodable {
+    let asset: RawAsset?
+    init(from decoder: Decoder) throws { asset = try? RawAsset(from: decoder) }
+}
+
 private struct RawManifest: Decodable {
     let version: String
     let tag: String?
     let notesURL: String?
-    let assets: [String: RawAsset]
+    let assets: [String: LenientAsset]
 
     enum CodingKeys: String, CodingKey {
         case version, tag, assets
@@ -152,9 +160,11 @@ private func isSafeAssetName(_ s: String) -> Bool {
     }
 }
 
-/// Verifies the signature first, then decodes strictly (unknown fields are ignored). Throws
-/// `UpdateError`.
-func parseSignedManifest(_ data: Data, signature: Data, publicKeyDER: Data) throws -> ReleaseManifest {
+/// Verifies the signature first, then decodes strictly: `version` and `assets` are required, `tag`
+/// is optional (defaults to, and must equal, `v<version>`), `published` / `notes_url` and unknown
+/// fields are ignored, and only `platform`'s asset is validated. Throws `UpdateError`.
+func parseSignedManifest(_ data: Data, signature: Data, publicKeyDER: Data,
+                         platform: String = Release.macAssetKey) throws -> ReleaseManifest {
     guard data.count + signature.count <= Release.maxManifestBytes else { throw UpdateError.tooLarge }
     guard verifyManifestSignature(data, signature: signature, publicKeyDER: publicKeyDER) else {
         throw UpdateError.badSignature
@@ -166,14 +176,15 @@ func parseSignedManifest(_ data: Data, signature: Data, publicKeyDER: Data) thro
     guard ReleaseVersion(raw.version) != nil else { throw UpdateError.badManifest("version") }
     let tag = raw.tag ?? "v\(raw.version)"
     guard tag == "v\(raw.version)" else { throw UpdateError.badManifest("tag") }
-    var assets: [String: ReleaseAsset] = [:]
-    for (key, a) in raw.assets {
+    var asset: ReleaseAsset?
+    if let entry = raw.assets[platform] {
+        guard let a = entry.asset else { throw UpdateError.badManifest("asset") }
         guard isSafeAssetName(a.name) else { throw UpdateError.badManifest("asset name") }
         guard isLowerHex64(a.sha256) else { throw UpdateError.badManifest("asset sha256") }
         guard a.size > 0, a.size <= Release.maxAssetBytes else { throw UpdateError.badManifest("asset size") }
-        assets[key] = ReleaseAsset(name: a.name, sha256: a.sha256, size: a.size)
+        asset = ReleaseAsset(name: a.name, sha256: a.sha256, size: a.size)
     }
-    return ReleaseManifest(version: raw.version, tag: tag, notesURL: raw.notesURL, assets: assets)
+    return ReleaseManifest(version: raw.version, tag: tag, notesURL: raw.notesURL, asset: asset)
 }
 
 /// `…/releases/download/<tag>/<name>`.
