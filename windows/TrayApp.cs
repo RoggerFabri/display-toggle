@@ -25,6 +25,17 @@ internal sealed class TrayApp : ApplicationContext
     private readonly System.Windows.Forms.Timer _settleRefresh = new() { Interval = 2000 };
     private readonly System.Windows.Forms.Timer _iconDebounce = new() { Interval = 400 };
 
+    // Self-update (Updater.cs). Checks and downloads run on the thread pool; results come back via Post.
+    private readonly Updater _updater = new();
+    private readonly CancellationTokenSource _updateCts = new();
+    private const int FirstUpdateCheckMs = 60_000;
+    private const int UpdateCheckEveryMs = 6 * 60 * 60 * 1000;
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = FirstUpdateCheckMs };
+    private bool _checkingUpdate;
+    private bool _reportCheck;              // a "Check for updates" click is waiting for this check's outcome
+    private UpdateManifest? _update;        // a verified newer release, once found
+    private bool _installingUpdate;
+
     // Looked up off the UI thread (its fallback is a DNS lookup) at start and on address changes.
     private volatile string _localAddress = "…";
 
@@ -86,6 +97,11 @@ internal sealed class TrayApp : ApplicationContext
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         _settleRefresh.Tick += (_, _) => { _settleRefresh.Stop(); RefreshTray(); };
         _iconDebounce.Tick += (_, _) => OnIconDebounce();
+
+        // Automatic update checks: once shortly after start, then every 6 h — never for dev builds
+        // ("Check for updates" still works there).
+        _updateTimer.Tick += (_, _) => { _updateTimer.Interval = UpdateCheckEveryMs; CheckForUpdates(manual: false); };
+        if (!UpdateLogic.CurrentVersion.IsDev) _updateTimer.Start();
 
         // This app assumes a laptop (internal panel + external). Warn once if there's no built-in
         // display, since "internal only" would then blank every screen.
@@ -221,6 +237,16 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Clear();
         foreach (var item in old) item.Dispose();
 
+        if (_update is { } upd)
+        {
+            menu.Items.Add(!IsInstalledCopy
+                ? new ToolStripMenuItem($"Update available: v{upd.Version} — run make install from a newer checkout") { Enabled = false }
+                : _installingUpdate
+                ? new ToolStripMenuItem($"Installing v{upd.Version}…") { Enabled = false }
+                : new ToolStripMenuItem($"Update available: v{upd.Version} — Install and restart", null, (_, _) => InstallUpdate()));
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
         // One checkable row per external monitor, labelled with its name, like the Mac's rows. Unlike
         // the Mac, every row switches the whole topology (extend ⇄ internal): the topology API can't
         // release one external alone. Checked = extended (on).
@@ -261,7 +287,99 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Add(BuildChoosePeerMenu());
 
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem($"Version {UpdateLogic.CurrentVersion}") { Enabled = false });
+        menu.Items.Add(_checkingUpdate
+            ? new ToolStripMenuItem("Checking for updates…") { Enabled = false }
+            : new ToolStripMenuItem("Check for updates", null, (_, _) => CheckForUpdates(manual: true)));
         menu.Items.Add(new ToolStripMenuItem("Quit", null, (_, _) => Quit()));
+    }
+
+    // ---- self-update (network/disk on the thread pool; results Posted back) ------
+
+    private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+    // Only the copy `make install` put in %LOCALAPPDATA%\display-toggle replaces itself; a dev run
+    // (bin\...) just says an update exists.
+    private static bool IsInstalledCopy => UpdateLogic.IsInstalledCopy(Environment.ProcessPath, LocalAppData);
+
+    /// <summary>Run one check. <paramref name="manual"/> = from the menu: report the outcome once, whatever it is.</summary>
+    private void CheckForUpdates(bool manual)
+    {
+        _reportCheck |= manual;
+        if (_checkingUpdate) return;   // the check already running reports to this click too
+        _checkingUpdate = true;
+        var current = UpdateLogic.CurrentVersion;
+        var ct = _updateCts.Token;
+        Task.Run(() => _updater.CheckAsync(current, ct), ct)
+            .ContinueWith(t => Post(() => UpdateCheckDone(t.IsCompletedSuccessfully ? t.Result : null)), TaskScheduler.Default);
+    }
+
+    private void UpdateCheckDone(UpdateCheckResult? result)   // null: cancelled (we're quitting)
+    {
+        _checkingUpdate = false;
+        bool report = _reportCheck;
+        _reportCheck = false;
+        if (result is null) return;
+
+        switch (result.Outcome)
+        {
+            case UpdateCheckResult.Kind.Available:
+                var m = result.Manifest!;
+                _update = m;
+                // One notification per version, unless the user asked just now.
+                if (report || _settings.LastNotifiedVersion != m.Version.ToString())
+                {
+                    _settings.LastNotifiedVersion = m.Version.ToString();
+                    _settings.Save();
+                    Notify(IsInstalledCopy
+                        ? $"Update available: v{m.Version}. Right-click the tray icon → Install and restart."
+                        : $"Update available: v{m.Version}. Run make install from a newer checkout to update.");
+                }
+                break;
+            case UpdateCheckResult.Kind.UpToDate:
+                _update = null;
+                if (report) Notify($"You're up to date (v{UpdateLogic.CurrentVersion}).");
+                break;
+            default:   // a failed automatic check stays quiet; the next one retries
+                if (report) Notify($"Couldn't check for updates: {result.Error}.", ToolTipIcon.Warning);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Download, verify and stage the update, start the helper that swaps the files in once we've
+    /// exited, then quit the normal way. Any failure before the hand-off leaves the install as it is.
+    /// </summary>
+    private void InstallUpdate()
+    {
+        if (_update is not { } m || _installingUpdate || !IsInstalledCopy) return;
+        _installingUpdate = true;
+        Notify($"Downloading v{m.Version}…");
+        string installDir = UpdateLogic.InstallDir(LocalAppData);
+        string temp = Path.GetTempPath();
+        int pid = Environment.ProcessId;
+        var ct = _updateCts.Token;
+        Task.Run(async () =>
+            {
+                string staging = await _updater.StageAsync(m, temp, ct).ConfigureAwait(false);
+                try { Updater.LaunchHelper(staging, installDir, pid, Path.Combine(temp, "display-toggle-update.log")); }
+                catch { Updater.TryDelete(staging); throw; }
+            }, ct)
+            .ContinueWith(t => Post(() => InstallStarted(m, t)), TaskScheduler.Default);
+    }
+
+    private void InstallStarted(UpdateManifest m, Task staged)
+    {
+        if (staged.IsCompletedSuccessfully)
+        {
+            Quit();   // the helper is waiting for us to exit; it then swaps the files and relaunches
+            return;
+        }
+        _installingUpdate = false;
+        if (staged.IsCanceled) return;
+        var e = staged.Exception?.GetBaseException();
+        string why = e is UpdateException ? e.Message : $"{e?.GetType().Name}: {e?.Message}";
+        Notify($"Couldn't install v{m.Version}: {why}. Still running v{UpdateLogic.CurrentVersion}.", ToolTipIcon.Warning);
     }
 
     // "Choose peer ▸": None (standalone), discovered instances (checked = current peer), then the manual dialog.
@@ -442,6 +560,10 @@ internal sealed class TrayApp : ApplicationContext
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             _settleRefresh.Dispose();
             _iconDebounce.Dispose();
+            _updateTimer.Dispose();
+            _updateCts.Cancel();   // an in-flight check/download stops; its Post is dropped
+            _updater.Dispose();
+            _updateCts.Dispose();
             _discovery.Dispose();
             _peer.Dispose();
             _tray.Dispose();

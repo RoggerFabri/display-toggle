@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace DisplayToggle;
@@ -40,7 +39,7 @@ internal static class Program
                 case "--extend": case "--on": return CmdSwitch(true);
                 case "--internal": case "--off": return CmdSwitch(false);
                 case "--version": case "-v":
-                    Console.WriteLine($"display-toggle {Assembly.GetExecutingAssembly().GetName().Version}");
+                    Console.WriteLine($"display-toggle {UpdateLogic.CurrentVersion}");
                     return 0;
                 case "--help": case "-h":
                     Console.WriteLine("display-toggle [--list | --discover [secs] | --toggle | --extend | --internal | --quit | --version]");

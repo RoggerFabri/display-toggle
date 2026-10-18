@@ -37,6 +37,9 @@ public sealed class Settings
     /// <summary>Set once we've warned that there's no built-in panel (non-laptop), so we don't nag.</summary>
     public bool WarnedNoInternal { get; set; }
 
+    /// <summary>The newest release we've shown an "update available" notification for (one per version).</summary>
+    public string LastNotifiedVersion { get; set; } = "";
+
     [JsonIgnore]
     public bool PeerConfigured => !string.IsNullOrWhiteSpace(PeerHost);
 

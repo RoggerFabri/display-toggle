@@ -6,7 +6,8 @@ one physical monitor — see [`../PROTOCOL.md`](../PROTOCOL.md).
 
 - **Left-click** the tray icon → toggle the external monitor on/off.
 - **Right-click** → a checkable toggle row per external monitor (checked = on; every row switches
-  the whole topology), this machine's IP, peer status, *Choose peer ▸*, and *Quit*.
+  the whole topology), this machine's IP, peer status, *Choose peer ▸*, the version,
+  *Check for updates*, and *Quit*.
 - A **green dot** on the icon means the peer is linked.
 
 Toggling switches the display **topology** — the same extend/internal modes as **Win+P** — via
@@ -92,6 +93,30 @@ Discovery needs the network profile set to **Private** (the menu hints when it's
 
 The shared monitor is expected to auto-select whichever input has a live signal, so releasing on
 one machine (its output drops) lets the other machine's grab take over.
+
+## Updates
+
+Releases are published on GitHub (`vX.Y.Z`) with a `manifest.json` signed by the release key. The
+app checks `releases/latest/download/manifest.json` about a minute after it starts and then every
+6 hours, and verifies the ECDSA P-256 signature against the public key built into the app before
+reading anything in it. When a newer version is found, a menu item appears at the top, *Update
+available: vX.Y.Z — Install and restart*, with one notification per version. *Check for updates*
+runs a check now and says what it found (up to date / update available / couldn't check).
+
+Nothing is installed until you click *Install and restart*. Then the app downloads
+`display-toggle-windows-x64.zip` into a temp folder, checks its size and SHA-256 against the
+signed manifest, unpacks it, starts a small hidden PowerShell helper and quits. The helper waits
+for the app to exit (60 s at most; otherwise it changes nothing), backs up the install folder,
+copies the new files over it (restoring the backup if that fails), starts the app again and deletes
+the temp folder. It logs to `%TEMP%\display-toggle-update.log`. Config in `%APPDATA%` is not
+touched. If any step before the hand-off fails, the app keeps running the current version and
+shows why.
+
+Self-update only applies to the copy `make install` put in `%LOCALAPPDATA%\display-toggle`. A build
+run from elsewhere (`make run`, `bin\…`) only says that an update exists; run `make install` from a
+newer checkout instead. Local builds report version `0.0.0-dev` and make no automatic checks
+(*Check for updates* still works); release builds get their version from
+`dotnet publish -p:Version=X.Y.Z`. `display-toggle.exe --version` prints it.
 
 ## Autostart at login
 
