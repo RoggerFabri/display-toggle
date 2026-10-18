@@ -67,7 +67,8 @@ public sealed class Updater : IDisposable
             if (!UpdateLogic.VerifySignature(manifest, sig, _publicKey))
                 return new(UpdateCheckResult.Kind.Failed, Error: "the release manifest's signature didn't verify");
             var m = UpdateLogic.ParseManifest(manifest);
-            return SemVer.IsNewer(m.Version, current)
+            // A release without a Windows build isn't an update for us (the Mac may still have one).
+            return SemVer.IsNewer(m.Version, current) && m.Windows is not null
                 ? new(UpdateCheckResult.Kind.Available, m)
                 : new(UpdateCheckResult.Kind.UpToDate, m);
         }
@@ -87,13 +88,14 @@ public sealed class Updater : IDisposable
     /// </summary>
     public async Task<string> StageAsync(UpdateManifest m, string tempRoot, CancellationToken ct)
     {
+        var asset = m.Windows ?? throw new UpdateException("the release has no Windows download");
         string staging = Path.Combine(tempRoot, "display-toggle-update-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
         try
         {
-            string zip = Path.Combine(staging, m.Windows.Name);   // a plain file name (ParseManifest checked)
-            var uri = new Uri(_downloadBase, Uri.EscapeDataString(m.Tag) + "/" + Uri.EscapeDataString(m.Windows.Name));
-            await DownloadVerifiedAsync(uri, zip, m.Windows, ct).ConfigureAwait(false);
+            string zip = Path.Combine(staging, asset.Name);   // a plain file name (ParseManifest checked)
+            var uri = new Uri(_downloadBase, Uri.EscapeDataString(m.Tag) + "/" + Uri.EscapeDataString(asset.Name));
+            await DownloadVerifiedAsync(uri, zip, asset, ct).ConfigureAwait(false);
 
             string files = Path.Combine(staging, "files");
             try { ZipFile.ExtractToDirectory(zip, files); }   // rejects entries that escape the dir

@@ -43,8 +43,11 @@ public sealed record SemVer(int Major, int Minor, int Patch, string? Suffix)
 /// <summary>One platform's asset in the signed manifest.</summary>
 public sealed record UpdateAsset(string Name, string Sha256, long Size);
 
-/// <summary>The fields of a verified <c>manifest.json</c> the Windows app needs (see the release spec).</summary>
-public sealed record UpdateManifest(SemVer Version, string Tag, UpdateAsset Windows);
+/// <summary>
+/// The fields of a verified <c>manifest.json</c> the Windows app needs (see the release spec).
+/// <see cref="Windows"/> is null when the release has no Windows build: no update for this platform.
+/// </summary>
+public sealed record UpdateManifest(SemVer Version, string Tag, UpdateAsset? Windows);
 
 /// <summary>
 /// The pure part of self-update: version handling, signature check, manifest parse, asset check and
@@ -108,9 +111,10 @@ public static class UpdateLogic
 
     /// <summary>
     /// Parse a manifest whose signature has ALREADY been verified. Strict about what we use: a release
-    /// <c>version</c>, a <c>tag</c> (if present) equal to <c>v&lt;version&gt;</c>, and the Windows asset with a
-    /// plain file name, 64 lowercase hex <c>sha256</c> and 0 &lt; <c>size</c> ≤ 100 MB. Unknown fields are
-    /// ignored. Throws <see cref="FormatException"/> on anything else.
+    /// <c>version</c>, a <c>tag</c> (if present) equal to <c>v&lt;version&gt;</c>, an <c>assets</c> object, and
+    /// — if the release has one — the Windows asset with a plain file name, 64 lowercase hex <c>sha256</c>
+    /// and 0 &lt; <c>size</c> ≤ 100 MB (no Windows asset → <see cref="UpdateManifest.Windows"/> is null).
+    /// Other platforms' assets and unknown fields are ignored. Throws <see cref="FormatException"/> on anything else.
     /// </summary>
     public static UpdateManifest ParseManifest(byte[] json)
     {
@@ -135,8 +139,10 @@ public static class UpdateLogic
 
             if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Object)
                 throw new FormatException("missing assets");
-            if (!assets.TryGetProperty(WindowsAssetKey, out var win) || win.ValueKind != JsonValueKind.Object)
-                throw new FormatException($"missing assets.{WindowsAssetKey}");
+            if (!assets.TryGetProperty(WindowsAssetKey, out var win))
+                return new UpdateManifest(version, tag, null);   // a release without a Windows build
+            if (win.ValueKind != JsonValueKind.Object)
+                throw new FormatException($"assets.{WindowsAssetKey} is not an object");
 
             string name = RequiredString(win, "name");
             if (!IsPlainFileName(name)) throw new FormatException($"bad asset name '{name}'");
@@ -211,7 +217,8 @@ public static class UpdateLogic
     /// <summary>
     /// The detached helper that finishes an update after the app has quit: wait (≤ 60 s) for
     /// <paramref name="pid"/> to exit, back up the install dir, copy the staged files over it (restoring
-    /// the backup if that fails), relaunch the app, delete the staging dir. Logs to <paramref name="logPath"/>.
+    /// the backup if that fails), relaunch the app, delete the staging dir — unless that restore failed too,
+    /// when the staging dir (and its backup) is kept and its path logged. Logs to <paramref name="logPath"/>.
     /// If the app never exits it changes nothing. Written as UTF-8 with BOM (Windows PowerShell 5.1).
     /// </summary>
     public static string HelperScript(int pid, string stagedFiles, string installDir, string stagingRoot, string logPath)
@@ -225,6 +232,7 @@ public static class UpdateLogic
         $log     = {{PsQuote(logPath)}}
         $backup  = Join-Path $staging 'backup'
         $exe     = Join-Path $install '{{ExeName}}'
+        $keepBackup = $false
 
         function Log([string]$msg) {
             try { Add-Content -LiteralPath $log -Value ('[' + (Get-Date).ToString('s') + '] ' + $msg) } catch { }
@@ -252,10 +260,16 @@ public static class UpdateLogic
             Log 'update installed'
         } else {
             Log 'copying the new files failed; restoring the previous install'
-            if (Copy-Tree $backup $install @('/MIR')) { Log 'previous install restored' } else { Log 'RESTORE FAILED; run make install' }
+            if (Copy-Tree $backup $install @('/MIR')) {
+                Log 'previous install restored'
+            } else {
+                # Keep the staging dir: its backup is the only intact copy of the previous install.
+                $keepBackup = $true
+                Log "RESTORE FAILED; the previous install is kept in $backup (copy it back, or run make install)"
+            }
         }
 
         try { Start-Process -FilePath $exe -WorkingDirectory $install; Log 'relaunched' } catch { Log "relaunch failed: $_" }
-        Cleanup
+        if ($keepBackup) { Log "not cleaning up; backup kept in $backup" } else { Cleanup }
         """;
 }

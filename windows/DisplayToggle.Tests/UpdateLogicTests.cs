@@ -162,6 +162,17 @@ public class UpdateLogicTests
         Assert.Equal(new UpdateAsset("display-toggle-windows-x64.zip", Sha, 1234), m.Windows);
     }
 
+    // Each app needs only its own asset: a release without a Windows build is "no update here", not an error.
+    [Theory]
+    [InlineData("{\"version\":\"1.0.0\",\"assets\":{}}")]
+    [InlineData("{\"version\":\"1.0.0\",\"assets\":{\"macos\":{\"name\":\"a\",\"sha256\":\"" + Sha + "\",\"size\":1}}}")]
+    public void Manifest_WithoutWindowsAsset_ParsesToNullAsset(string json)
+    {
+        var m = Parse(json);
+        Assert.Equal("1.0.0", m.Version.ToString());
+        Assert.Null(m.Windows);
+    }
+
     [Fact]
     public void Manifest_WithoutTag_DerivesIt() => Assert.Equal("v1.4.0", Parse(Manifest(tag: null)).Tag);
 
@@ -170,8 +181,8 @@ public class UpdateLogicTests
     [InlineData("[]")]
     [InlineData("{}")]
     [InlineData("{\"version\":\"1.0.0\"}")]
-    [InlineData("{\"version\":\"1.0.0\",\"assets\":{}}")]
-    [InlineData("{\"version\":\"1.0.0\",\"assets\":{\"macos\":{\"name\":\"a\",\"sha256\":\"" + Sha + "\",\"size\":1}}}")]
+    [InlineData("{\"version\":\"1.0.0\",\"assets\":[]}")]
+    [InlineData("{\"version\":\"1.0.0\",\"assets\":{\"windows-x64\":\"a.zip\"}}")]
     public void Manifest_Malformed_Throws(string json) => Assert.Throws<FormatException>(() => Parse(json));
 
     [Theory]
@@ -218,7 +229,7 @@ public class UpdateLogicTests
     public void Manifest_BadSize_Throws(string size) => Assert.Throws<FormatException>(() => Parse(Manifest(size: size)));
 
     [Fact]
-    public void Manifest_MaxSize_Parses() => Assert.Equal(UpdateLogic.MaxAssetBytes, Parse(Manifest(size: "104857600")).Windows.Size);
+    public void Manifest_MaxSize_Parses() => Assert.Equal(UpdateLogic.MaxAssetBytes, Parse(Manifest(size: "104857600")).Windows!.Size);
 
     // ---- asset --------------------------------------------------------------
 
@@ -266,6 +277,28 @@ public class UpdateLogicTests
         Assert.Contains("WaitForExit(60000)", s);
         Assert.Contains("Start-Process -FilePath $exe", s);
         Assert.DoesNotContain("{{", s);
+    }
+
+    [Fact]
+    public void HelperScript_KeepsBackupWhenRestoreFails()
+    {
+        // The backup lives in the staging dir; if restoring it failed it's the only intact copy.
+        var lines = UpdateLogic.HelperScript(1, @"C:\a\files", @"C:\i", @"C:\a", @"C:\a\log")
+            .Replace("\r", "").Split('\n').Select(l => l.Trim()).ToList();
+        int failed = lines.FindIndex(l => l.Contains("RESTORE FAILED"));
+        Assert.True(failed > 0);
+        Assert.Contains("$backup", lines[failed]);   // the log names where the backup is
+
+        // The else-branch that logs RESTORE FAILED sets the flag and doesn't clean up itself...
+        int start = lines.FindLastIndex(failed, l => l == "} else {");
+        int end = lines.FindIndex(failed, l => l == "}");
+        var branch = lines.GetRange(start, end - start + 1);
+        Assert.Contains("$keepBackup = $true", branch);
+        Assert.DoesNotContain(branch, l => l.Contains("Cleanup"));
+
+        // ...and from there on, the only Cleanup is the one the flag skips.
+        var after = lines.Skip(end).Where(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"\bCleanup\b")).ToList();
+        Assert.Equal(new[] { "if ($keepBackup) { Log \"not cleaning up; backup kept in $backup\" } else { Cleanup }" }, after);
     }
 
     [Fact]

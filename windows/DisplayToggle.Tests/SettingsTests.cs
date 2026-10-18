@@ -40,6 +40,23 @@ public class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void ReadOnly_KeepsChangesInMemory()
+    {
+        // The tray relies on this to show the "update available" balloon once per session even when
+        // the config can't be written.
+        File.WriteAllText(ConfigPath, "{}");
+        Settings s;
+        using (new FileStream(ConfigPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            s = Settings.Load(ConfigPath);
+
+        Assert.True(s.ReadOnly);
+        s.LastNotifiedVersion = "1.2.3";
+        s.Save();
+        Assert.Equal("1.2.3", s.LastNotifiedVersion);
+        Assert.Equal("", Settings.Load(ConfigPath).LastNotifiedVersion);
+    }
+
+    [Fact]
     public void CorruptFile_IsBackedUp_ThenDefaults()
     {
         File.WriteAllText(ConfigPath, """{"InstanceId":"tru""");

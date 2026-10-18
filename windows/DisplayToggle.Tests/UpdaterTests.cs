@@ -133,6 +133,26 @@ public sealed class UpdaterTests : IDisposable
     }
 
     [Fact]
+    public async Task Check_NewerReleaseWithoutWindowsAsset_IsUpToDate()
+    {
+        // A release that only has a macOS build: nothing to install here, and not an error.
+        var manifest = Encoding.UTF8.GetBytes(
+            """{"version":"2.0.0","assets":{"macos":{"name":"display-toggle-macos.tar.gz","sha256":"0000000000000000000000000000000000000000000000000000000000000000","size":1}}}""");
+        Serve("/latest/download/manifest.json", manifest);
+        Serve("/latest/download/manifest.json.sig", Sign(manifest));
+        using var u = NewUpdater();
+        var r = await u.CheckAsync(V100, default);
+        Assert.Equal(UpdateCheckResult.Kind.UpToDate, r.Outcome);
+        Assert.Null(r.Manifest!.Windows);
+        Assert.Equal(UpdateCheckResult.Kind.UpToDate, (await u.CheckAsync(new SemVer(0, 0, 0, "dev"), default)).Outcome);
+
+        // And staging such a release refuses before creating anything.
+        var e = await Assert.ThrowsAsync<UpdateException>(() => u.StageAsync(r.Manifest, _temp, default));
+        Assert.Contains("no Windows download", e.Message);
+        Assert.Empty(Directory.GetFileSystemEntries(_temp));
+    }
+
+    [Fact]
     public async Task Check_FollowsRedirects()
     {
         // Like GitHub: releases/latest/download/… redirects to the tagged release, then to a CDN.
