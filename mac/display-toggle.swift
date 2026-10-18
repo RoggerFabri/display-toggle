@@ -1,8 +1,9 @@
 // display-toggle.swift
 // Menu bar app — left-click to toggle, right-click for menu.
 //
-// Compile:  make   (swiftc with peer-logic.swift + an embedded Info.plist for Local Network / Bonjour access)
-// Test:     make test   (unit tests for peer-logic.swift, Swift Testing via Package.swift)
+// Compile:  make   (swiftc with peer-logic.swift, peer-link.swift, update-logic.swift, updater.swift
+//                  + an embedded Info.plist for Local Network / Bonjour access and the version)
+// Test:     make test   (unit tests for peer-logic.swift + update-logic.swift, Swift Testing via Package.swift)
 // Run:      ./display-toggle
 //
 // Private APIs used:
@@ -463,6 +464,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var peerProblem: (problem: PeerProblem, host: String?)?
     let discovery = PeerBrowser()
     var discovered: [DiscoveredPeer] = []
+    let updater = Updater(defaults: prefs)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         isOn = readState().on
@@ -504,7 +506,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.followDiscoveredPeer()
         }
         discovery.start(selfID: instanceID())
+
+        updater.onChange = { [weak self] in
+            guard let self = self, let button = self.statusItem.button else { return }
+            button.toolTip = self.updater.available.map { "Display Toggle — update available: v\($0.version)" }
+                ?? "Display Toggle"
+        }
+        updater.startAutomaticChecks()
     }
+
+    @objc func installUpdate() { updater.install() }
+    @objc func checkForUpdates() { updater.check(userInitiated: true) }
 
     func startPeer() {
         if readStandalone() {
@@ -637,6 +649,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showMenu() {
         let menu = NSMenu()
 
+        if let update = updateMenuItem() {
+            menu.addItem(update)
+            menu.addItem(.separator())
+        }
+
         let externals = onlineDisplayIDs().filter { CGDisplayIsBuiltin($0) == 0 }
         let savedOffIDs = readState().ids
         let toggleIDs = externals + savedOffIDs.filter { !externals.contains($0) }
@@ -698,6 +715,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(choosePeerItem(peerHost: peerHost, peerPort: peerPort))
 
         menu.addItem(.separator())
+        let version = NSMenuItem(title: "Version \(updater.currentVersion)", action: nil, keyEquivalent: "")
+        version.isEnabled = false
+        menu.addItem(version)
+        let busy = updater.checking || updater.installing
+        let check = NSMenuItem(title: updater.checking ? "Checking for updates…" : "Check for updates",
+                               action: busy ? nil : #selector(checkForUpdates), keyEquivalent: "")
+        check.target = self
+        check.isEnabled = !busy
+        menu.addItem(check)
+
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit",
                                 action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
@@ -705,6 +733,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         DispatchQueue.main.async { self.statusItem.menu = nil }
+    }
+
+    /// Top-of-menu line for a verified newer release: install it (installed copy), or open its
+    /// release page (a build run from the checkout can't replace itself).
+    private func updateMenuItem() -> NSMenuItem? {
+        guard let m = updater.available else { return nil }
+        let title: String
+        if updater.installing {
+            title = "Installing v\(m.version)…"
+        } else if updater.canInstall {
+            title = "Update available: v\(m.version) — Install and restart"
+        } else {
+            title = "Update available: v\(m.version) — run make install from a newer checkout"
+        }
+        let item = NSMenuItem(title: title, action: updater.installing ? nil : #selector(installUpdate), keyEquivalent: "")
+        item.target = self
+        item.isEnabled = !updater.installing
+        return item
     }
 
     /// "Choose peer ▸" — None (standalone), discovered instances (current one checked), then manual entry.
@@ -807,6 +853,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 enum DisplayToggleApp {
     static func main() {
+        if CommandLine.arguments.dropFirst().contains("--version") {
+            print(appVersion(from: Bundle.main.infoDictionary))
+            exit(0)
+        }
+
         // Exclusive non-blocking lock — second instance exits immediately. In the per-user temp dir,
         // not /tmp, so another user's lock file can't stop us from starting.
         let lockPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("display_toggle.lock")
