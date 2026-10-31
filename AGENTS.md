@@ -120,7 +120,8 @@ Local Network usage for peer discovery without an `.app` bundle. Its `CFBundleId
 and the app crashes on launch. The app is built by plain `swiftc` (no Xcode project). Its entry
 point is `@main enum DisplayToggleApp`, because top-level code isn't allowed with more than one
 file. `peer-logic.swift` holds the pure discovery decisions (self-filter, address pick,
-follow/auto-pick, checkmark) and the v2 `PeerSession` handshake, so they can be unit-tested.
+follow/auto-pick, checkmark), the v2 `PeerSession` handshake and the switched-off display
+bookkeeping (`reconcileSavedDisplays`, `savedDisplays`), so they can be unit-tested.
 `peer-link.swift` holds `PeerLink` (sockets + connection management), compiled into the test target
 too so the link is tested over loopback (`listenPort`/`advertise:` exist for that). `update-logic.swift`
 is in the test target as well; `updater.swift` (URLSession, `osascript`, `launchctl`) is not. Updater
@@ -164,7 +165,7 @@ The Mac app is a menu bar app (`NSApplication` with `.accessory` activation poli
 
 2. **Display discovery** — `CGGetOnlineDisplayList` to enumerate connected displays; `CGDisplayIsBuiltin() == 0` (returns `boolean_t` / `Int32`, not Swift `Bool`) to identify externals.
 
-3. **State persistence** — `UserDefaults(suiteName: "com.display-toggle")`, stored in `~/Library/Preferences/com.display-toggle.plist`. Keys: `on` (Bool), `ids` ([Int] of `CGDirectDisplayID`s), `peerHost`/`peerPort`/`peerSecret` for the peer link, `instanceId`/`peerId` for discovery, `peerNone` (Bool) for *Choose peer ▸ None (standalone)*, which stops the link and auto-pick (Windows: `Settings.PeerNone`), and `updateNotified` (String), the last release version we showed an update notification for (Windows: `Settings.LastNotifiedVersion`, kept in memory even when the config is `ReadOnly`). IDs are stored on disable so they can be re-enabled even if the display drops off the online list while software-disabled.
+3. **State persistence** — `UserDefaults(suiteName: "com.display-toggle")`, stored in `~/Library/Preferences/com.display-toggle.plist`. Keys: `on` (Bool), `ids` ([Int] of switched-off `CGDirectDisplayID`s), `displayIdentities` (String(id) → [vendor, model, serial]), `peerHost`/`peerPort`/`peerSecret` for the peer link, `instanceId`/`peerId` for discovery, `peerNone` (Bool) for *Choose peer ▸ None (standalone)*, which stops the link and auto-pick (Windows: `Settings.PeerNone`), and `updateNotified` (String), the last release version we showed an update notification for (Windows: `Settings.LastNotifiedVersion`, kept in memory even when the config is `ReadOnly`). IDs are stored on disable so they can be re-enabled even if the display drops off the online list while software-disabled. A `CGDirectDisplayID` isn't stable (a reboot or OS upgrade can give the same monitor a new one and hand the old one to nothing or another display), so each is saved with its EDID identity, and `currentOffDisplays` re-binds the list when the menu opens and on a toggle-on (the per-display switches act on rows the menu just re-bound): kept if the id still reports that identity, moved to an online external that does, else dropped (an id saved by an older version, with no identity, adopts its id's current one or is dropped if the system no longer knows it). It doesn't run at launch, when an external may not be enumerated yet. `ids` keeps its old meaning so older versions still read it.
 
 4. **AppDelegate** — `NSStatusItem` in `NSStatusBar.system`. Left-click calls `performToggle()`; right-click calls `showMenu()` which sets `statusItem.menu`, calls `performClick`, then clears the menu asynchronously so subsequent left-clicks are not intercepted by it.
 

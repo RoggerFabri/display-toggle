@@ -67,6 +67,16 @@ private func onlineDisplayIDs() -> [CGDirectDisplayID] {
     return Array(ids.prefix(Int(count)))
 }
 
+/// The display's EDID identity, or nil if CoreGraphics doesn't know the id (any more).
+private func displayIdentity(_ id: CGDirectDisplayID) -> DisplayIdentity? {
+    DisplayIdentity(vendor: CGDisplayVendorNumber(id), model: CGDisplayModelNumber(id),
+                    serial: CGDisplaySerialNumber(id))
+}
+
+private func savedDisplay(_ id: CGDirectDisplayID) -> SavedDisplay {
+    SavedDisplay(id: id, identity: displayIdentity(id))
+}
+
 private func displayName(for id: CGDirectDisplayID) -> String {
     let key = NSDeviceDescriptionKey("NSScreenNumber")
     for screen in NSScreen.screens {
@@ -88,15 +98,28 @@ private func displayName(for id: CGDirectDisplayID) -> String {
 
 private let prefs = UserDefaults(suiteName: "com.display-toggle")!
 
-private func readState() -> (on: Bool, ids: [CGDirectDisplayID]) {
+/// `off`: the displays we switched off (`ids` + `displayIdentities`, see `savedDisplays`).
+private func readState() -> (on: Bool, off: [SavedDisplay]) {
     let on = prefs.object(forKey: "on") as? Bool ?? true
-    let ids = (prefs.array(forKey: "ids") as? [Int] ?? []).map { CGDirectDisplayID($0) }
-    return (on: on, ids: ids)
+    let off = savedDisplays(ids: prefs.array(forKey: "ids") as? [Int] ?? [],
+                            identities: prefs.dictionary(forKey: "displayIdentities") ?? [:])
+    return (on: on, off: off)
 }
 
-private func writeState(on: Bool, ids: [CGDirectDisplayID] = []) {
+private func writeState(on: Bool, off: [SavedDisplay] = []) {
     prefs.set(on, forKey: "on")
-    prefs.set(ids.map(Int.init), forKey: "ids")
+    prefs.set(off.map { Int($0.id) }, forKey: "ids")
+    prefs.set(identitiesPlist(off), forKey: "displayIdentities")
+}
+
+/// The saved switched-off displays re-bound to today's display ids (`reconcileSavedDisplays`),
+/// saved back when that changed anything. Called when the user acts, not at launch, when an
+/// external display may not have been enumerated yet and would be dropped as gone.
+private func currentOffDisplays(externals: [CGDirectDisplayID]) -> [SavedDisplay] {
+    let state = readState()
+    let off = reconcileSavedDisplays(state.off, onlineExternals: externals, identity: displayIdentity)
+    if off != state.off { writeState(on: state.on, off: off) }
+    return off
 }
 
 private func readPeer() -> (host: String, port: UInt16) {
@@ -582,7 +605,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let externals = onlineDisplayIDs().filter { CGDisplayIsBuiltin($0) == 0 }
         if on {
             var targets = externals.filter { !isDisplayEnabled($0) }
-            for id in readState().ids where !targets.contains(id) { targets.append(id) }
+            for d in currentOffDisplays(externals: externals) where !targets.contains(d.id) { targets.append(d.id) }
             var ok = true
             for id in targets where !setDisplayEnabled(id, true) { ok = false }
             guard ok else { return false }
@@ -591,10 +614,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             let targets = externals.filter { isDisplayEnabled($0) }
             for id in targets { _ = displayName(for: id) }
+            let saved = targets.map(savedDisplay) // identities while they're still enabled
             var ok = true
             for id in targets where !setDisplayEnabled(id, false) { ok = false }
             guard ok else { return false }
-            writeState(on: false, ids: targets.isEmpty ? readState().ids : targets)
+            writeState(on: false, off: targets.isEmpty ? readState().off : saved)
             isOn = false
         }
         updateIcon()
@@ -622,14 +646,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func toggleDisplayFromView(id: CGDirectDisplayID, on: Bool) {
+        let entry = savedDisplay(id) // its identity, read before it's switched off
         // On failure nothing changed: don't record it or tell the peer (it would grab the monitor
         // while we still drive it).
         guard setDisplayEnabled(id, on) else { NSSound.beep(); return }
-        var offIDs = readState().ids
-        if on { offIDs.removeAll { $0 == id } }
-        else if !offIDs.contains(id) { offIDs.append(id) }
-        writeState(on: offIDs.isEmpty, ids: offIDs)
-        isOn = offIDs.isEmpty
+        var off = readState().off
+        if on { off.removeAll { $0.id == id } }
+        else if !off.contains(where: { $0.id == id }) { off.append(entry) }
+        writeState(on: off.isEmpty, off: off)
+        isOn = off.isEmpty
         updateIcon()
         peer.sendState(isOn)
     }
@@ -655,7 +680,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let externals = onlineDisplayIDs().filter { CGDisplayIsBuiltin($0) == 0 }
-        let savedOffIDs = readState().ids
+        // Re-bound first: a display whose id changed (reboot, upgrade) would otherwise get a second
+        // row under its old id.
+        let savedOffIDs = currentOffDisplays(externals: externals).map(\.id)
         let toggleIDs = externals + savedOffIDs.filter { !externals.contains($0) }
 
         // Build the informational labels first so we can size the toggle rows to match the

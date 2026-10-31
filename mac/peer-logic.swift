@@ -1,7 +1,8 @@
 // peer-logic.swift
 // Pure peer-discovery decisions (no networking, no UI), compiled into the app by `make` and
 // unit-tested by `make test` (Swift Testing via mac/Package.swift). Windows mirrors these rules in
-// PeerDiscoveryLogic; keep the semantics identical. See PROTOCOL.md "Discovery".
+// PeerDiscoveryLogic; keep the semantics identical. See PROTOCOL.md "Discovery". Also the
+// Mac-only bookkeeping of switched-off displays (end of file).
 
 import CryptoKit
 import Foundation
@@ -308,4 +309,76 @@ func newConnectionWins(activeOutbound: Bool, newOutbound: Bool, myID: String, pe
         return true
     }
     return newOutbound == (me < peer)
+}
+
+// MARK: - Switched-off displays (Mac only)
+// A CGDirectDisplayID isn't stable: after a reboot, reconnect or OS upgrade the same monitor can come
+// back under another id, and a freed id can later go to a different display. So each display we
+// switch off is saved with its EDID identity, and the saved list is re-bound to the current ids
+// before use. Ids are UInt32 (CGDirectDisplayID) so this file needs no CoreGraphics.
+
+/// A display's EDID vendor / model / serial (CGDisplayVendorNumber, …ModelNumber, …SerialNumber).
+struct DisplayIdentity: Equatable {
+    let vendor: UInt32
+    let model: UInt32
+    let serial: UInt32
+
+    /// nil when CoreGraphics doesn't know the id: it reports all zeros for an id that has gone and
+    /// 0xFFFFFFFF for one it never handed out. A switched-off (offline) display still reports its own.
+    init?(vendor: UInt32, model: UInt32, serial: UInt32) {
+        guard vendor != .max, vendor != 0 || model != 0 || serial != 0 else { return nil }
+        self.vendor = vendor
+        self.model = model
+        self.serial = serial
+    }
+}
+
+/// A display we switched off. `identity` is nil when it was saved by a version that didn't store one.
+struct SavedDisplay: Equatable {
+    let id: UInt32
+    let identity: DisplayIdentity?
+}
+
+/// Re-bind the saved switched-off displays to the ids the system uses now (`identity` reads an id's
+/// live identity). Duplicate ids collapse to the first; then each entry is
+/// 1. kept if its id still reports its identity (an entry without one adopts what its id reports);
+/// 2. else moved to an online external with its identity that no other entry holds;
+/// 3. else dropped: its id is gone or belongs to another display, so it can't turn this one back on.
+func reconcileSavedDisplays(_ saved: [SavedDisplay], onlineExternals: [UInt32],
+                            identity: (UInt32) -> DisplayIdentity?) -> [SavedDisplay] {
+    var seen = Set<UInt32>()
+    let unique = saved.filter { seen.insert($0.id).inserted }
+    var result: [SavedDisplay?] = unique.map { entry in
+        guard let live = identity(entry.id), entry.identity == nil || entry.identity == live else { return nil }
+        return SavedDisplay(id: entry.id, identity: live)
+    }
+    var held = Set(result.compactMap { $0?.id })
+    for (i, entry) in unique.enumerated() where result[i] == nil {
+        guard let want = entry.identity,
+              let id = onlineExternals.first(where: { !held.contains($0) && identity($0) == want }) else { continue }
+        result[i] = SavedDisplay(id: id, identity: want)
+        held.insert(id)
+    }
+    return result.compactMap { $0 }
+}
+
+/// Read the prefs encoding: `ids` is the list of switched-off ids (the key older versions read and
+/// write), and `displayIdentities` maps String(id) to [vendor, model, serial]. An id with no valid
+/// identity there (saved by an older version) reads with identity nil; invalid ids are skipped.
+func savedDisplays(ids: [Int], identities: [String: Any]) -> [SavedDisplay] {
+    ids.compactMap { raw in
+        guard let id = UInt32(exactly: raw) else { return nil }
+        let parts = (identities[String(id)] as? [Int])?.compactMap { UInt32(exactly: $0) } ?? []
+        let identity = parts.count == 3 ? DisplayIdentity(vendor: parts[0], model: parts[1], serial: parts[2]) : nil
+        return SavedDisplay(id: id, identity: identity)
+    }
+}
+
+/// The `displayIdentities` value for `saved` (entries without an identity are left out).
+func identitiesPlist(_ saved: [SavedDisplay]) -> [String: [Int]] {
+    var out: [String: [Int]] = [:]
+    for d in saved {
+        if let i = d.identity { out[String(d.id)] = [Int(i.vendor), Int(i.model), Int(i.serial)] }
+    }
+    return out
 }

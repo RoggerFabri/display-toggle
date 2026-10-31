@@ -89,9 +89,11 @@ arm64 + x86_64 binary for macOS 13+, ad-hoc signed). `display-toggle --version` 
 
 ## Notes
 
-- Settings live in `~/Library/Preferences/com.display-toggle.plist`: the on/off intent, the ids of
+- Settings live in `~/Library/Preferences/com.display-toggle.plist`: the on/off intent, the
   displays turned off (so they can be turned back on after they drop off the display list), and the
-  peer, including the shared secret in plain text.
+  peer, including the shared secret in plain text. macOS can give a monitor a new display id after a
+  reboot or upgrade, so each turned-off display is saved with its vendor/model/serial and followed to
+  its new id; an id that no longer belongs to it is forgotten.
 - Single instance: a second launch exits at once (a lock file in your temp dir).
 - The binary embeds an `Info.plist` (Bonjour service + Local Network usage) instead of being an
   `.app` bundle, and `make install` ad-hoc signs it.
