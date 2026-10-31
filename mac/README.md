@@ -27,12 +27,15 @@ make                  # build ./display-toggle
 make run              # build and run locally (stops a running instance first)
 make test             # unit tests (Swift Testing) + real peer links over loopback
 make clean            # remove the binary and .build
-sudo make install     # install to /usr/local/bin and start it now + at every login
-sudo make uninstall   # stop it and remove the binary and the login agent
+make install          # install to ~/.local/bin and start it now + at every login
+make uninstall        # stop it and remove the binary and the login agent
 ```
 
-`make install` needs `sudo` only to write `/usr/local/bin`. Everything else (the launch agent,
-settings) belongs to your user. Re-running it replaces the binary and restarts the app at once.
+`make install` needs no `sudo`: the binary goes to `~/.local/bin` (`PREFIX=…` to change it), and the
+launch agent and settings belong to your user too. Because you own the binary, updates replace it
+without an administrator prompt. Re-running it replaces the binary and restarts the app at once.
+Installs made before this went to `/usr/local/bin`; `make install` and `make uninstall` delete that
+old copy, or print the `sudo rm` to run when they can't.
 
 ## Pairing
 
@@ -55,30 +58,30 @@ secret* (it has one and this side doesn't).
 
 ## Autostart
 
-`sudo make install` registers a launch agent (`~/Library/LaunchAgents/com.<user>.display-toggle.plist`)
+`make install` registers a launch agent (`~/Library/LaunchAgents/com.<user>.display-toggle.plist`)
 that starts the app at login. launchd restarts it if it crashes, but not after you choose **Quit**.
-`sudo make uninstall` removes it.
+`make uninstall` removes it.
 
 ## Updates
 
 The menu shows the running version (*Version X.Y.Z*; a local build says `0.0.0-dev`). The installed
 copy looks for a new release on GitHub a minute after launch and then every 6 hours, whatever its
-version: after `sudo make install` (a `0.0.0-dev` build, older than every release) it checks by itself
+version: after `make install` (a `0.0.0-dev` build, older than every release) it checks by itself
 and is offered the latest release. A build run from `mac/` (`make run`) never checks by itself.
 *Check for updates* checks on demand anywhere and says what it found. Nothing installs on its own.
-The first install is `sudo make install`, or the release binary put at `/usr/local/bin/display-toggle`.
+The first install is `make install`, or the release binary put at `~/.local/bin/display-toggle`.
 
 When a newer release is found, the menu gets a top line *Update available: vX.Y.Z — Install and
 restart*, and macOS shows one notification for that version (sent through `osascript`, so it may
 appear under *Script Editor*; a bare binary can't post its own notifications). Clicking the line
 downloads the macOS archive, checks it against the release's signed manifest (ECDSA P-256 signature,
 then size + SHA-256), makes sure the new binary starts and reports the expected version, then
-replaces the installed binary (asking for an administrator password when `/usr/local/bin` isn't
-writable) and restarts through the launch agent. If anything fails, the installed copy is left as
-it was and an alert says why.
+replaces the installed binary (asking for an administrator password only when its folder isn't
+writable, e.g. a root-owned `/usr/local/bin`) and restarts through the launch agent. If anything
+fails, the installed copy is left as it was and an alert says why.
 
 Only the installed copy (`…/bin/display-toggle`) updates itself. A build run from `mac/` points you
-to the release instead: update the checkout and run `sudo make install`.
+to the release instead: update the checkout and run `make install`.
 
 After an update macOS may ask again for **Local Network** access, because the replaced binary is
 ad-hoc signed and counts as a new app. Allow it, or the peer link stops working.

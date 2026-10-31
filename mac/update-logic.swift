@@ -212,7 +212,7 @@ func assetMatches(_ data: Data, _ asset: ReleaseAsset) -> Bool {
 // MARK: - Install
 
 /// Install is offered only for an installed copy (`<prefix>/bin/<binary>`, normally
-/// /usr/local/bin/display-toggle), not for a build run from a checkout (e.g. mac/display-toggle).
+/// ~/.local/bin/display-toggle), not for a build run from a checkout (e.g. mac/display-toggle).
 func isInstalledLocation(_ resolvedPath: String) -> Bool {
     let dir = (resolvedPath as NSString).deletingLastPathComponent
     return resolvedPath.hasPrefix("/") && (dir as NSString).lastPathComponent == "bin"

@@ -105,8 +105,8 @@ cd mac
 make                  # compile display-toggle binary (VERSION defaults to 0.0.0-dev)
 make dist VERSION=X.Y.Z  # release asset: universal, ad-hoc signed → mac/dist/display-toggle-macos.tar.gz
 make clean            # remove binary, gen/ and dist/
-sudo make install     # build + install to /usr/local/bin + register launchd agent
-sudo make uninstall   # remove binary and launchd agent
+make install          # build + install to ~/.local/bin (PREFIX=…) + register launchd agent; no sudo
+make uninstall        # remove binary and launchd agent
 make run              # build and run locally (kills any existing instance first)
 make test             # unit tests (Swift Testing): peer-logic + update-logic + loopback peer-link tests
 ```
@@ -177,4 +177,4 @@ The Mac app is a menu bar app (`NSApplication` with `.accessory` activation poli
 
 ## Install / autostart
 
-`make install` generates `~/Library/LaunchAgents/com.<username>.display-toggle.plist` from `launch-agent.plist` (template) using `sed`, then `launchctl bootout`s any existing agent and `launchctl bootstrap`s it into `gui/<uid>` — so a re-install stops the old instance and launches the new binary immediately (via `RunAtLoad`), the launchd analogue of Windows' stop+relaunch. `KeepAlive` `{SuccessfulExit: false}` restarts it after a crash but not after Quit; self-update relies on it too (it restarts via `launchctl kickstart -k`, and if that fails exits non-zero so launchd restarts the new binary). Uses `SUDO_USER` env var to resolve the real user when invoked with `sudo`. Template variables in `launch-agent.plist`: `DISPLAY_TOGGLE_LABEL` → `com.<username>.display-toggle`, `DISPLAY_TOGGLE_BINPATH` → install path.
+`make install` puts the binary in `$(PREFIX)/bin`, `PREFIX` defaulting to `~/.local` (the user's own, like Windows' `%LOCALAPPDATA%`), so the updater replaces it directly; a root-owned location (the old `/usr/local/bin` default) makes every update ask for an admin password, because AppleScript's `with administrator privileges` prompt takes no Touch ID since Sonoma. Under `sudo` it still resolves the real user from `SUDO_USER` and `chown`s a per-user install back to them. Both `install` and `uninstall` run `remove-legacy`, which deletes a leftover `/usr/local/bin/display-toggle` (or prints the `sudo rm` when it can't). It generates `~/Library/LaunchAgents/com.<username>.display-toggle.plist` from `launch-agent.plist` (template) using `sed`, then `launchctl bootout`s any existing agent and `launchctl bootstrap`s it into `gui/<uid>` — so a re-install stops the old instance and launches the new binary immediately (via `RunAtLoad`), the launchd analogue of Windows' stop+relaunch. `KeepAlive` `{SuccessfulExit: false}` restarts it after a crash but not after Quit; self-update relies on it too (it restarts via `launchctl kickstart -k`, and if that fails exits non-zero so launchd restarts the new binary). Template variables in `launch-agent.plist`: `DISPLAY_TOGGLE_LABEL` → `com.<username>.display-toggle`, `DISPLAY_TOGGLE_BINPATH` → install path.

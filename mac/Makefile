@@ -6,15 +6,19 @@ GEN        = gen
 GEN_PLIST  = $(GEN)/Info.plist
 EMBED      = -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker $(GEN_PLIST)
 DIST_ARCHIVE = dist/display-toggle-macos.tar.gz
-PREFIX    ?= /usr/local
-BINPATH    = $(PREFIX)/bin/$(BINARY)
 LOCAL_USER := $(or $(SUDO_USER),$(shell whoami))
 UID        := $(shell id -u $(LOCAL_USER))
 USER_HOME  := $(shell eval echo ~$(LOCAL_USER))
+# Per-user by default (like Windows' %LOCALAPPDATA%): the app runs as you, and a binary you own
+# lets it replace itself on update without an administrator prompt.
+PREFIX    ?= $(USER_HOME)/.local
+BINPATH    = $(PREFIX)/bin/$(BINARY)
+# Where installs went before the per-user default; install and uninstall remove a copy left there.
+LEGACY_BINPATH = /usr/local/bin/$(BINARY)
 LABEL      = com.$(LOCAL_USER).display-toggle
 PLIST      = $(USER_HOME)/Library/LaunchAgents/$(LABEL).plist
 
-.PHONY: all build clean install uninstall run test dist FORCE
+.PHONY: all build clean install uninstall remove-legacy run test dist FORCE
 
 all: build
 
@@ -63,6 +67,8 @@ install: build
 	install -d $(PREFIX)/bin
 	install -m 755 $(BINARY) $(BINPATH)
 	codesign --sign - --force $(BINPATH)
+	@# Under sudo, hand a per-user install back to the user, or updates would need an admin prompt.
+	-@case "$(PREFIX)" in "$(USER_HOME)"/*) chown $(LOCAL_USER) "$(PREFIX)/bin" "$(BINPATH)";; esac
 	mkdir -p "$(USER_HOME)/Library/LaunchAgents"
 	sed \
 		-e 's|DISPLAY_TOGGLE_LABEL|$(LABEL)|g' \
@@ -79,12 +85,21 @@ install: build
 	launchctl bootstrap gui/$(UID) "$(PLIST)"
 	@echo "→ Installed to $(BINPATH)"
 	@echo "→ Registered for login autostart (running now)"
+	@$(MAKE) --no-print-directory remove-legacy
 
 uninstall:
 	-launchctl bootout gui/$(UID)/$(LABEL) 2>/dev/null
 	pkill -x $(BINARY) 2>/dev/null; true
 	rm -f "$(PLIST)" "$(BINPATH)"
+	@$(MAKE) --no-print-directory remove-legacy
 	@echo "→ Uninstalled"
+
+# The agent no longer points at an old /usr/local/bin copy; delete it (root-owned, so it may need sudo).
+remove-legacy:
+	@if [ "$(BINPATH)" != "$(LEGACY_BINPATH)" ] && [ -e "$(LEGACY_BINPATH)" ]; then \
+		rm -f "$(LEGACY_BINPATH)" 2>/dev/null && echo "→ Removed old copy $(LEGACY_BINPATH)" \
+			|| echo "→ Old copy left at $(LEGACY_BINPATH): remove it with sudo rm $(LEGACY_BINPATH)"; \
+	fi
 
 run: build
 	pkill -x $(BINARY) 2>/dev/null; true

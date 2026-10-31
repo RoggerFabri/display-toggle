@@ -260,7 +260,7 @@ final class Updater {
             a.addButton(withTitle: "Later")
         } else {
             a.informativeText = "You have version \(currentVersion), run from a build folder rather than "
-                + "the installed copy. Run `sudo make install` from a newer checkout to update."
+                + "the installed copy. Run `make install` from a newer checkout to update."
             a.addButton(withTitle: "Show Release")
             a.addButton(withTitle: "OK")
         }

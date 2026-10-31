@@ -56,7 +56,7 @@ one machine lets the other's grab take over. See [`PROTOCOL.md`](PROTOCOL.md).
 ```sh
 cd mac
 make              # build
-sudo make install # build + install + login autostart (restarted after a crash)
+make install      # build + install to ~/.local/bin + login autostart (restarted after a crash)
 make run          # build and run locally
 make test         # unit + loopback tests
 ```
@@ -96,7 +96,7 @@ offered the latest release. A build run from a checkout (`make run`) never check
 
 The **first install is still manual**: `make install` from a checkout (above), which also sets up
 login autostart, or the asset from the latest release put where `make install` would put it
-(Windows: unzip into `%LOCALAPPDATA%\display-toggle`; Mac: `/usr/local/bin/display-toggle`), since
+(Windows: unzip into `%LOCALAPPDATA%\display-toggle`; Mac: `~/.local/bin/display-toggle`), since
 only that installed copy checks for and installs updates. On the Mac, expect macOS to ask for Local Network
 access again after an update.
 

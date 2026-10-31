@@ -237,6 +237,7 @@ private func manifest(version: String = "1.2.3", tag: String? = nil, extra: Stri
     }
 
     @Test func installedLocation() {
+        #expect(isInstalledLocation("/Users/me/.local/bin/display-toggle")) // make install's default
         #expect(isInstalledLocation("/usr/local/bin/display-toggle"))
         #expect(isInstalledLocation("/opt/homebrew/bin/display-toggle"))
         #expect(!isInstalledLocation("/Users/me/src/display-toggle/mac/display-toggle"))
@@ -246,6 +247,7 @@ private func manifest(version: String = "1.2.3", tag: String? = nil, extra: Stri
 
     @Test func automaticChecksFollowTheInstalledPathNotTheVersion() {
         // `make install` builds 0.0.0-dev; the installed copy must still check by itself.
+        #expect(runsAutomaticUpdateChecks(resolvedPath: "/Users/me/.local/bin/display-toggle"))
         #expect(runsAutomaticUpdateChecks(resolvedPath: "/usr/local/bin/display-toggle"))
         #expect(runsAutomaticUpdateChecks(resolvedPath: "/opt/homebrew/bin/display-toggle"))
         #expect(!runsAutomaticUpdateChecks(resolvedPath: "/Users/me/src/display-toggle/mac/display-toggle"))
