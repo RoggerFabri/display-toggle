@@ -100,4 +100,9 @@ arm64 + x86_64 binary for macOS 13+, ad-hoc signed). `display-toggle --version` 
 - Single instance: a second launch exits at once (a lock file in your temp dir).
 - The binary embeds an `Info.plist` (Bonjour service + Local Network usage) instead of being an
   `.app` bundle, and `make install` ad-hoc signs it.
-- Peer-link log: `log stream --predicate 'subsystem == "com.display-toggle"'`.
+- Logs: `log stream --predicate 'subsystem == "com.display-toggle"'` live, or
+  `log show --last 1h --predicate 'subsystem == "com.display-toggle"'` for display switches after
+  the fact (each one with its result; the peer link's own lines are live only).
+- When the peer releases the monitor but switching it on here fails (seen with the screen asleep and
+  locked), the menu shows *Peer asked for on: refused* with the error, and the switch is retried when
+  the screen wakes or unlocks, or the displays change.

@@ -147,7 +147,10 @@ is in the test target as well; `updater.swift` (URLSession, `osascript`, `launch
 state lives on the main queue; network, disk and process work runs on its own queue. `mac/Package.swift`
 exists **only** for `make test` (`swift test`, tests in `mac/Tests/PeerLogicTests`). Keep new
 testable logic pure and put it in `peer-logic.swift`; UI and display code stays in `display-toggle.swift`.
-`PeerLink` logs to the unified log: `log stream --predicate 'subsystem == "com.display-toggle"'`.
+`PeerLink` logs to the unified log (category `peer`, `info`: live only, `log stream`), and the
+display code logs every received peer state, switch and failing step with its CGError (category
+`display`, `notice`/`error`: persisted, so `log show` finds it later):
+`log stream --predicate 'subsystem == "com.display-toggle"'`.
 
 Windows — run from `windows/` (`make` targets mirror the Mac set; OS-specific steps live in
 `windows/scripts/*.ps1`):
@@ -190,7 +193,7 @@ The Mac app is a menu bar app (`NSApplication` with `.accessory` activation poli
 
    `AppDelegate.isOn` tracks *intent* (last toggle direction), not a live hardware probe. The icon and right-click label reflect this value. When no external display is online (a software-disabled one drops off the list), `aggregateOn()` falls back to the saved `on` state rather than probing hardware. `setExternals(to:)` applies a target state to all externals; `performToggle()` calls it and then `peer.sendState(isOn)`, while `applyRemoteState(peerOn:)` calls it *without* broadcasting. The per-display switch rows (`toggleDisplayFromView`) flip one display and broadcast, and do nothing (beep) if the switch fails.
 
-   `PeerLink` (Network.framework) runs the TCP peer on its own `DispatchQueue`; callbacks hop to the main queue (`onConnection`, `onPeerState`, and `onProblem` for the *needs update* / *not authenticated* / *requires a secret* menu statuses). `applyRemoteState` applies the *inverse* of the peer's state and only when it differs, so remote-driven changes never echo.
+   `PeerLink` (Network.framework) runs the TCP peer on its own `DispatchQueue`; callbacks hop to the main queue (`onConnection`, `onPeerState`, and `onProblem` for the *needs update* / *not authenticated* / *requires a secret* menu statuses). `applyRemoteState` applies the *inverse* of the peer's state and only when it differs, so remote-driven changes never echo. A remote switch the system refuses isn't dropped: `PeerSwitch` (`peer-logic.swift`, tested) keeps it, the menu shows it with its CGError, and `retryPeerSwitch` tries again when the screens wake, the session becomes active, the screen unlocks (`com.apple.screenIsUnlocked`) or the display set changes. A newer peer state replaces it and a local toggle cancels it. A remote switch that succeeds is recorded with `peer.recordState`, so our next `hello` reports the current intent.
 
 5. **Icon** — ON: `"display"` SF Symbol as template image. OFF: same symbol with `NSImage.SymbolConfiguration(paletteColors: [.tertiaryLabelColor])` for a faded appearance.
 

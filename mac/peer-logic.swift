@@ -382,3 +382,37 @@ func identitiesPlist(_ saved: [SavedDisplay]) -> [String: [Int]] {
     }
     return out
 }
+
+// MARK: - Peer-requested switches (Mac only)
+
+/// The switch a peer's `state` asks for (PROTOCOL "On receiving state"), kept when the system
+/// refuses it so it can be retried. macOS refuses display changes in some session states (see
+/// AppDelegate.retryPeerSwitch), and a dropped request leaves the shared monitor dark on both
+/// machines. A later peer state replaces the request and a local toggle cancels it, so a retry never
+/// undoes a newer decision.
+struct PeerSwitch {
+    /// The state still to reach, and the error that stopped the last attempt (a CGError raw value).
+    private(set) var pending: (on: Bool, error: Int32)?
+
+    /// A peer `state` arrived: the switch to make now, or nil when the displays are already there.
+    mutating func received(desired: Bool, current: Bool) -> Bool? {
+        pending = nil
+        return desired == current ? nil : desired
+    }
+
+    /// The outcome of switching to `on`: nil error = done, else kept for a retry.
+    mutating func attempted(_ on: Bool, error: Int32?) {
+        pending = error.map { (on, $0) }
+    }
+
+    /// The screen woke, unlocked, or the display set changed: the switch to retry, if one is still
+    /// wanted. One that has been reached in the meantime is dropped.
+    mutating func retry(current: Bool) -> Bool? {
+        guard let p = pending else { return nil }
+        if p.on == current { pending = nil; return nil }
+        return p.on
+    }
+
+    /// The user toggled here: their choice wins over an unfinished peer request.
+    mutating func cancel() { pending = nil }
+}

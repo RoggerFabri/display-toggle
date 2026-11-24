@@ -18,6 +18,7 @@ import Network
 import SwiftUI
 import SystemConfiguration
 import dnssd
+import os
 
 // MARK: - Private API
 
@@ -42,16 +43,40 @@ private let cdIsEnabled: CDIsUserEnabledFn? =
 
 // MARK: - Display utilities
 
-private func setDisplayEnabled(_ id: CGDirectDisplayID, _ enabled: Bool) -> Bool {
+/// Every switch and its result, at `notice` (persisted, unlike `info`, so `log show` finds it later):
+/// `log show --last 1h --predicate 'subsystem == "com.display-toggle"'`.
+private let displayLog = Logger(subsystem: "com.display-toggle", category: "display")
+
+/// Switch one display. Returns `.success`, or the error of the step that failed (logged).
+private func setDisplayEnabled(_ id: CGDirectDisplayID, _ enabled: Bool) -> CGError {
+    let err: CGError
+    let step: String
     if let fn = cgsConfigureEnabled {
         var config: CGDisplayConfigRef?
-        guard CGBeginDisplayConfiguration(&config) == .success else { return false }
-        let err = fn(config, id, enabled)
-        guard err == .success else { CGCancelDisplayConfiguration(config); return false }
-        return CGCompleteDisplayConfiguration(config, .permanently) == .success
+        let begin = CGBeginDisplayConfiguration(&config)
+        if begin != .success {
+            (err, step) = (begin, "begin")
+        } else {
+            let configure = fn(config, id, enabled)
+            if configure != .success {
+                CGCancelDisplayConfiguration(config)
+                (err, step) = (configure, "configure")
+            } else {
+                (err, step) = (CGCompleteDisplayConfiguration(config, .permanently), "complete")
+            }
+        }
+    } else if let fn = cdSetEnabled {
+        fn(id, enabled) // returns nothing: success can't be told
+        (err, step) = (.success, "CoreDisplay")
+    } else {
+        (err, step) = (.notImplemented, "no display API")
     }
-    if let fn = cdSetEnabled { fn(id, enabled); return true }
-    return false
+    if err == .success {
+        displayLog.notice("display \(id) \(enabled ? "on" : "off", privacy: .public): ok")
+    } else {
+        displayLog.error("display \(id) \(enabled ? "on" : "off", privacy: .public): \(step, privacy: .public) failed, CGError \(err.rawValue)")
+    }
+    return err
 }
 
 private func isDisplayEnabled(_ id: CGDirectDisplayID) -> Bool {
@@ -488,6 +513,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let discovery = PeerBrowser()
     var discovered: [DiscoveredPeer] = []
     let updater = Updater(defaults: prefs)
+    /// A peer-requested switch the system refused, retried on wake / unlock / display changes.
+    var peerSwitch = PeerSwitch()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         isOn = readState().on
@@ -505,8 +532,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                                    queue: .main) { [weak self] _ in self?.updateIcon() }
         }
         // … and when the menu bar moves to a display with a different backing scale (pixel grid).
+        // A display change can also be the moment a refused peer switch goes through.
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                               object: nil, queue: .main) { [weak self] _ in self?.updateIcon() }
+                                               object: nil, queue: .main) { [weak self] _ in
+            self?.updateIcon()
+            self?.retryPeerSwitch(after: "display change")
+        }
+        // A peer switch that arrived with the screen asleep and locked didn't take (2026-11-24: the
+        // Dell stayed dark on both machines), so a refused one is retried once the user is back.
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] n in
+                self?.retryPeerSwitch(after: n.name.rawValue)
+            }
+        }
+        DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsUnlocked"),
+                                                            object: nil, queue: .main) { [weak self] _ in
+            self?.retryPeerSwitch(after: "unlock")
+        }
         updateIcon()
 
         peer.onPeerState = { [weak self] peerOn in self?.applyRemoteState(peerOn: peerOn) }
@@ -599,57 +642,93 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return externals.isEmpty ? readState().on : externals.contains { isDisplayEnabled($0) }
     }
 
-    /// Drive all externals to `on`. Updates state + icon. Returns true if applied.
-    @discardableResult
-    func setExternals(to on: Bool) -> Bool {
+    /// Drive all externals to `on`. Updates state + icon. Returns `.success`, or the first error
+    /// (state is then left as it was).
+    func setExternals(to on: Bool) -> CGError {
         let externals = onlineDisplayIDs().filter { CGDisplayIsBuiltin($0) == 0 }
+        var failure = CGError.success
         if on {
             var targets = externals.filter { !isDisplayEnabled($0) }
-            for d in currentOffDisplays(externals: externals) where !targets.contains(d.id) { targets.append(d.id) }
-            var ok = true
-            for id in targets where !setDisplayEnabled(id, true) { ok = false }
-            guard ok else { return false }
+            // Enabling a display that is already on fails (CGError 1001 at complete) and would fail the
+            // whole switch: skip saved ids that were switched back on some other way.
+            for d in currentOffDisplays(externals: externals)
+            where !targets.contains(d.id) && !isDisplayEnabled(d.id) { targets.append(d.id) }
+            displayLog.notice("externals on: switching \(targets, privacy: .public)")
+            for id in targets {
+                let err = setDisplayEnabled(id, true)
+                if failure == .success { failure = err }
+            }
+            guard failure == .success else { return failure }
             writeState(on: true)
             isOn = true
         } else {
             let targets = externals.filter { isDisplayEnabled($0) }
             for id in targets { _ = displayName(for: id) }
             let saved = targets.map(savedDisplay) // identities while they're still enabled
-            var ok = true
-            for id in targets where !setDisplayEnabled(id, false) { ok = false }
-            guard ok else { return false }
+            displayLog.notice("externals off: switching \(targets, privacy: .public)")
+            for id in targets {
+                let err = setDisplayEnabled(id, false)
+                if failure == .success { failure = err }
+            }
+            guard failure == .success else { return failure }
             writeState(on: false, off: targets.isEmpty ? readState().off : saved)
             isOn = false
         }
         updateIcon()
-        return true
+        return .success
     }
 
     @objc func performToggle() {
-        if setExternals(to: !aggregateOn()) {
+        peerSwitch.cancel()
+        let err = setExternals(to: !aggregateOn())
+        if err == .success {
             peer.sendState(isOn)
         } else {
             NSSound.beep()
             let alert = NSAlert()
             alert.messageText = "Couldn't switch the display"
-            alert.informativeText = "The display change was rejected by the system."
+            alert.informativeText = "The display change was rejected by the system (CGError \(err.rawValue))."
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }
     }
 
-    /// Apply the peer's state inversely and silently (no re-broadcast — breaks echo loops).
+    /// Apply the peer's state inversely and silently (no re-broadcast — breaks echo loops). A
+    /// refused switch is kept and retried (`retryPeerSwitch`), never dropped.
     func applyRemoteState(peerOn: Bool) {
-        let desired = !peerOn
-        guard aggregateOn() != desired else { return }
-        setExternals(to: desired)
+        let current = aggregateOn()
+        displayLog.notice("peer state on=\(peerOn): want \(!peerOn), have \(current)")
+        if let on = peerSwitch.received(desired: !peerOn, current: current) { applyPeerSwitch(on) }
+    }
+
+    private func applyPeerSwitch(_ on: Bool) {
+        let err = setExternals(to: on)
+        peerSwitch.attempted(on, error: err == .success ? nil : err.rawValue)
+        if err == .success {
+            peer.recordState(on)
+        } else {
+            displayLog.error("peer switch to \(on ? "on" : "off", privacy: .public) refused (CGError \(err.rawValue)); retrying on wake, unlock or display change")
+        }
+        updateIcon()
+    }
+
+    private func retryPeerSwitch(after event: String) {
+        guard peerSwitch.pending != nil else { return }
+        let current = aggregateOn()
+        guard let on = peerSwitch.retry(current: current) else {
+            displayLog.notice("peer switch no longer needed after \(event, privacy: .public)")
+            return
+        }
+        displayLog.notice("retrying peer switch to \(on ? "on" : "off", privacy: .public) after \(event, privacy: .public)")
+        applyPeerSwitch(on)
     }
 
     func toggleDisplayFromView(id: CGDirectDisplayID, on: Bool) {
+        peerSwitch.cancel()
         let entry = savedDisplay(id) // its identity, read before it's switched off
         // On failure nothing changed: don't record it or tell the peer (it would grab the monitor
         // while we still drive it).
-        guard setDisplayEnabled(id, on) else { NSSound.beep(); return }
+        guard setDisplayEnabled(id, on) == .success else { NSSound.beep(); return }
         var off = readState().off
         if on { off.removeAll { $0.id == id } }
         else if !off.contains(where: { $0.id == id }) { off.append(entry) }
@@ -739,6 +818,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let peerStatus = NSMenuItem(title: peerTitle, action: nil, keyEquivalent: "")
         peerStatus.isEnabled = false
         menu.addItem(peerStatus)
+        if let p = peerSwitch.pending {
+            let pending = NSMenuItem(title: "Peer asked for \(p.on ? "on" : "off"): refused (CGError \(p.error)), retrying",
+                                     action: nil, keyEquivalent: "")
+            pending.isEnabled = false
+            menu.addItem(pending)
+        }
         menu.addItem(choosePeerItem(peerHost: peerHost, peerPort: peerPort))
 
         menu.addItem(.separator())

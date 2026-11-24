@@ -112,6 +112,12 @@ final class PeerLink {
         }
     }
 
+    /// Record a peer-driven change without sending it (remote changes are silent), so the `on` our
+    /// next `hello` reports is the current intent, not the last local toggle.
+    func recordState(_ on: Bool) {
+        queue.async { self.currentOn = on }
+    }
+
     private func stopLocked() {
         generation += 1
         peerHost = "" // a pending scheduleDial must not re-dial after stop()
