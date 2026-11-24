@@ -43,6 +43,25 @@ output technology as the Dell, so the app can't tell them apart).
   monitor isn't connected, the stored intent is used.
 - The obsolete `ExternalNames` label cache goes: inactive externals are still enumerated by CCD.
 
+## Hot-plug (added 2026-11-24)
+
+Windows remembers a layout per set of connected displays and re-applies it when one is plugged in
+or removed; when the Tessera virtual monitor (SudoVDA) came or went, that flipped the Dell against
+the user's intent. Approved by the user:
+
+- After a display change the app didn't cause, if the set of connected targets changed (a key
+  appeared or disappeared), the tray puts the shared monitor back to the stored intent
+  (`Settings.On`), switching only that monitor.
+- Only on a connected-set change: activation-only changes (manual changes in Windows Settings, our
+  own switches) never trigger it. Only in shared mode (a resolved shared key); never in
+  all-externals mode, where the topology switch would turn other displays off. Nothing happens if
+  the shared monitor isn't connected or is already in the intended state.
+- It runs ~1.5 s after the last display-change event of a burst (separate from the 400 ms icon
+  debounce), through the FIFO `QueueSwitch`, so it decides from live state and can't interleave
+  with other switches.
+- Silent: no peer message (the peer already knows the intent) and no notification on success; one
+  warning notification on failure.
+
 ## Left to the builder
 
 Exact CCD flag combinations and the fallback when the topology database has no entry; both are

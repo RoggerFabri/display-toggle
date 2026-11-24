@@ -31,7 +31,11 @@ Two sibling apps that do the same job on each OS, plus a shared network protocol
   `SharedDisplayLogic.cs`. "On" = the shared target is active (all-mode: any external active,
   falling back to the attached count, `NativeDisplay.cs`, when CCD is unavailable); a shared
   monitor that isn't connected uses the saved state. A switch is saved and broadcast only if it
-  worked; for the `DisplaySwitch.exe` fallback that means a re-query confirms the new topology. Self-update: `UpdateLogic.cs` (versions,
+  worked; for the `DisplaySwitch.exe` fallback that means a re-query confirms the new topology.
+  **Hot-plug:** Windows re-applies a saved layout per set of connected displays (the Tessera
+  virtual monitor coming or going flipped the Dell), so when the connected key set changes in
+  shared mode the tray silently puts the shared monitor back to `Settings.On` (see Windows
+  threading; never in all-externals mode, no peer message). Self-update: `UpdateLogic.cs` (versions,
   manifest signature/parse, asset hash, installed-copy check, the helper script — pure, tested) and
   `Updater.cs` (HTTP, download + staging, launching the helper). The csproj default version is
   `0.0.0-dev`; releases pass `-p:Version=X.Y.Z`.
@@ -76,6 +80,10 @@ queue drained by a writer task; discovery's `Peers` is a lock-free snapshot, and
 called under its `_gate` lock (that deadlock once froze the tray menu). The tray icon is only
 re-added on a session switch (RDP/unlock) or when the tray icon size changes (a DPI switch,
 `TrayApp.OnDisplayChanged`); other display and theme changes just re-render it, debounced.
+`TrayApp` also tracks the last connected target-key set: ~1.5 s after the last display-change event
+of a burst (a separate timer from the 400 ms icon debounce), if that set changed, it queues a
+switch through `QueueSwitch` that puts the shared monitor back to its intent, only that monitor;
+activation-only changes (manual or our own) never trigger it, and a failure shows one warning.
 Update checks and downloads run on the thread pool and report back through `Post`; installing hands
 off to a detached PowerShell helper (it waits for this process to exit, swaps the files in and
 relaunches), and the app then quits the normal way.

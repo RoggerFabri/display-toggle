@@ -59,4 +59,51 @@ public class SharedDisplayLogicTests
         Assert.True(SharedDisplayLogic.AggregateOn(null, Array.Empty<T>(), storedOn: true));
         Assert.False(SharedDisplayLogic.AggregateOn(null, Array.Empty<T>(), storedOn: false));
     }
+
+    private static HashSet<string> Keys(params string[] keys) => new(keys, StringComparer.OrdinalIgnoreCase);
+
+    [Fact]
+    public void Hotplug_FirstObservation_DoesNothing() =>
+        Assert.Null(SharedDisplayLogic.HotplugTarget(null, new[] { Panel, Dell with { IsActive = false } }, "dell", intentOn: true));
+
+    [Fact]
+    public void Hotplug_ActivationOnlyChange_DoesNothing() =>
+        Assert.Null(SharedDisplayLogic.HotplugTarget(Keys("panel", "dell", "vda"),
+            new[] { Panel, Dell with { IsActive = false }, Virtual }, "dell", intentOn: true));
+
+    [Fact]
+    public void Hotplug_TargetConnected_ReleasesSharedTurnedOnAgainstIntent() =>
+        Assert.False(SharedDisplayLogic.HotplugTarget(Keys("panel", "dell"),
+            new[] { Panel, Dell, Virtual }, "dell", intentOn: false));
+
+    [Fact]
+    public void Hotplug_TargetRemoved_GrabsSharedTurnedOffAgainstIntent() =>
+        Assert.True(SharedDisplayLogic.HotplugTarget(Keys("panel", "dell", "vda"),
+            new[] { Panel, Dell with { IsActive = false } }, "dell", intentOn: true));
+
+    [Fact]
+    public void Hotplug_AlreadyInIntendedState_DoesNothing() =>
+        Assert.Null(SharedDisplayLogic.HotplugTarget(Keys("panel", "dell"),
+            new[] { Panel, Dell, Virtual }, "dell", intentOn: true));
+
+    [Fact]
+    public void Hotplug_AllMode_DoesNothing() =>
+        Assert.Null(SharedDisplayLogic.HotplugTarget(Keys("panel", "dell"),
+            new[] { Panel, Dell, Virtual }, "", intentOn: false));
+
+    [Fact]
+    public void Hotplug_SharedNotConnected_DoesNothing() =>
+        Assert.Null(SharedDisplayLogic.HotplugTarget(Keys("panel", "dell", "vda"),
+            new[] { Panel, Dell }, "gone", intentOn: false));
+
+    [Fact]
+    public void Hotplug_KeysCompareCaseInsensitively()
+    {
+        // The same set in another case: not a hot-plug.
+        Assert.Null(SharedDisplayLogic.HotplugTarget(new HashSet<string> { "PANEL", "DELL" },
+            new[] { Panel, Dell with { IsActive = false } }, "dell", intentOn: true));
+        // The configured key finds its target whatever the case.
+        Assert.False(SharedDisplayLogic.HotplugTarget(Keys("panel", "dell"),
+            new[] { Panel, Dell, Virtual }, "DELL", intentOn: false));
+    }
 }

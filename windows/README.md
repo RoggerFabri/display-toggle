@@ -29,6 +29,15 @@ paths supplied), so other displays — e.g. a virtual monitor — stay as they a
 Saved layouts don't survive a reboot or a driver reset (the adapter IDs change); the monitor is
 then placed right of the desktop instead.
 
+Windows remembers a layout per set of connected displays and re-applies it when a display is
+plugged in or removed, which used to turn the shared monitor on or off by itself (e.g. when the
+Tessera virtual monitor came or went). So when a display is connected or removed, about 1.5 s after
+Windows settles the app puts the shared monitor back to its last on/off state, switching only that
+monitor, through the same one-at-a-time switch queue. It does this only when the set of connected
+displays changed (turning a display on or off in Windows Settings never triggers it), only with a
+single shared monitor (not in *All external monitors* mode), and silently: the peer isn't told,
+and a notification appears only if it fails.
+
 In *All external monitors* mode the app switches the whole topology instead — the extend/internal
 modes of **Win+P** (`SDC_TOPOLOGY_EXTEND` / `INTERNAL`), with `DisplaySwitch.exe` as a fallback.
 

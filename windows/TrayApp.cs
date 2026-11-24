@@ -25,6 +25,12 @@ internal sealed class TrayApp : ApplicationContext
     private readonly (EventWaitHandle Event, RegisteredWaitHandle Wait)[] _commandWaits;
     private readonly System.Windows.Forms.Timer _settleRefresh = new() { Interval = 2000 };
     private readonly System.Windows.Forms.Timer _iconDebounce = new() { Interval = 400 };
+    private readonly System.Windows.Forms.Timer _hotplugSettle = new() { Interval = 1500 };
+
+    // Connected target keys as last seen (SharedDisplayLogic.ConnectedKeys), to tell a hot-plug from
+    // an activation change. Read and written only inside QueueSwitch jobs, which run one at a time in
+    // order (each continues the previous task), so the worker never races itself or the UI thread.
+    private HashSet<string>? _connectedKeys;
 
     // Self-update (Updater.cs). Checks and downloads run on the thread pool; results come back via Post.
     private readonly Updater _updater = new();
@@ -98,6 +104,9 @@ internal sealed class TrayApp : ApplicationContext
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         _settleRefresh.Tick += (_, _) => { _settleRefresh.Stop(); RefreshTray(); };
         _iconDebounce.Tick += (_, _) => OnIconDebounce();
+        _hotplugSettle.Tick += (_, _) => { _hotplugSettle.Stop(); ReassertSharedAfterHotplug(); };
+        // First look at the connected set, on the switch worker like every later one.
+        QueueSwitch<bool?>(() => { TrackConnected(DisplayTargets.All()); return null; }, _ => { });
 
         // Automatic update checks: once shortly after start, then every 6 h — only for the installed
         // copy, whatever its version (`make install` builds 0.0.0-dev, which every release is newer
@@ -161,7 +170,38 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e)
-        => Post(() => DebounceIconUpdate(displayChanged: true));
+        => Post(() =>
+        {
+            DebounceIconUpdate(displayChanged: true);
+            _hotplugSettle.Stop();
+            _hotplugSettle.Start();
+        });
+
+    /// <summary>
+    /// Once a display-change burst has been quiet for 1.5 s (Windows has finished re-applying its stored
+    /// layout), put the shared monitor back to the handoff intent if a display was plugged in or
+    /// removed and Windows switched it (see <see cref="SharedDisplayLogic.HotplugTarget"/>). Silent: the
+    /// peer already knows the intent, so nothing is sent and success isn't announced.
+    /// </summary>
+    private void ReassertSharedAfterHotplug()
+        => QueueSwitch(() =>
+        {
+            var targets = DisplayTargets.All();
+            bool? restore = SharedDisplayLogic.HotplugTarget(_connectedKeys, targets, _settings.SharedDisplayKey, _manager.On);
+            TrackConnected(targets);
+            return restore is bool on ? _manager.SetShared(on) : (bool?)null;   // null: nothing to do
+        }, ok =>
+        {
+            if (ok == false) Notify("Couldn't restore the shared monitor after a display was connected or removed.", ToolTipIcon.Warning);
+            UpdateIcon();
+        });
+
+    // Switch worker only (see _connectedKeys). An empty list is a failed CCD query, not "nothing
+    // connected": keep the last real observation so the next one isn't mistaken for a hot-plug.
+    private void TrackConnected(List<DisplayTargets.Target> targets)
+    {
+        if (targets.Count > 0) _connectedKeys = SharedDisplayLogic.ConnectedKeys(targets);
+    }
 
     // Our own toggles fire this too. Re-adding the tray entry (remove + add) costs ~0.5s on the UI
     // thread and churns the icon, so only do it when the tray's icon size changed (a DPI switch);
@@ -598,6 +638,7 @@ internal sealed class TrayApp : ApplicationContext
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             _settleRefresh.Dispose();
             _iconDebounce.Dispose();
+            _hotplugSettle.Dispose();
             _updateTimer.Dispose();
             _updateCts.Cancel();   // an in-flight check/download stops; its Post is dropped
             _updater.Dispose();
