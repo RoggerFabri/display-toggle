@@ -26,6 +26,32 @@ public class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void SharedDisplay_RoundTrips()
+    {
+        var s = Settings.Load(ConfigPath);
+        s.SharedDisplayKey = @"\\?\DISPLAY#DEL1234#5&abc";
+        s.SharedDisplayName = "DELL U2720Q";
+        s.Save();
+
+        var back = Settings.Load(ConfigPath);
+        Assert.Equal(@"\\?\DISPLAY#DEL1234#5&abc", back.SharedDisplayKey);
+        Assert.Equal("DELL U2720Q", back.SharedDisplayName);
+    }
+
+    [Fact]
+    public void OldConfig_WithExternalNames_StillLoads()
+    {
+        File.WriteAllText(ConfigPath, """{"On":false,"InstanceId":"keep-me","ExternalNames":["DELL U2720Q"],"PeerHost":"mac.local"}""");
+        var s = Settings.Load(ConfigPath);
+
+        Assert.Empty(Directory.GetFiles(_dir, "config.json.bad-*"));   // not treated as corrupt
+        Assert.False(s.On);
+        Assert.Equal("keep-me", s.InstanceId);
+        Assert.Equal("mac.local", s.PeerHost);
+        Assert.Equal("", s.SharedDisplayKey);
+    }
+
+    [Fact]
     public void LockedFile_LoadsReadOnly_AndSaveDoesNotOverwrite()
     {
         File.WriteAllText(ConfigPath, """{"InstanceId":"keep-me"}""");

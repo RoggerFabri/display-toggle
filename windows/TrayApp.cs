@@ -5,8 +5,9 @@ using Microsoft.Win32;
 namespace DisplayToggle;
 
 /// <summary>
-/// System-tray app. Left-click toggles all secondaries; right-click opens a per-display
-/// menu plus peer status/config — the Windows analogue of the Mac menu-bar app.
+/// System-tray app. Left-click grabs/releases the shared monitor; right-click opens a per-display
+/// menu (each external switchable on its own, plus the shared-monitor choice) and peer status/config
+/// — the Windows analogue of the Mac menu-bar app.
 /// Local toggles broadcast state to the peer; peer state changes are applied inversely
 /// (shared-monitor handoff) without echoing. See PROTOCOL.md.
 /// </summary>
@@ -212,9 +213,17 @@ internal sealed class TrayApp : ApplicationContext
             Post(() => done(result));
         }, TaskScheduler.Default);
 
-    private void DoToggle() => QueueSwitch(_manager.ToggleAll, LocalSwitchDone);
+    private void DoToggle() => QueueSwitch(_manager.ToggleShared, LocalSwitchDone);
 
-    private void DoSet(bool on) => QueueSwitch(() => _manager.SetAll(on) ? on : (bool?)null, LocalSwitchDone);
+    private void DoSet(bool on) => QueueSwitch(() => _manager.SetShared(on) ? on : (bool?)null, LocalSwitchDone);
+
+    // A non-shared monitor: switched alone and never announced — the peer only tracks the shared one.
+    private void SwitchOne(DisplayManager.ExternalRow row)
+        => QueueSwitch(() => (bool?)_manager.SetOne(row.Key, !row.IsActive), ok =>
+        {
+            if (ok != true) Notify($"Couldn't switch {row.Name} — the display change was rejected.", ToolTipIcon.Warning);
+            UpdateIcon();
+        });
 
     private void LocalSwitchDone(bool? newState)
     {
@@ -248,16 +257,24 @@ internal sealed class TrayApp : ApplicationContext
             menu.Items.Add(new ToolStripSeparator());
         }
 
-        // One checkable row per external monitor, labelled with its name, like the Mac's rows. Unlike
-        // the Mac, every row switches the whole topology (extend ⇄ internal): the topology API can't
-        // release one external alone. Checked = extended (on).
-        var (on, labels) = _manager.MenuState();
-        foreach (var name in labels)
+        // One checkable row per external monitor, labelled with its name, like the Mac's rows.
+        // Checked = active. Every row switches only its own monitor: the shared row grabs/releases and
+        // tells the peer; any other row (every row in all mode) switches locally, never announced.
+        var (_, rows, allMode) = _manager.MenuState();
+        if (rows.Count == 0)
+            menu.Items.Add(new ToolStripMenuItem("No external monitor") { Enabled = false });
+        foreach (var row in rows)
         {
-            var item = new ToolStripMenuItem(name) { Checked = on, CheckOnClick = false };
-            item.Click += (_, _) => DoToggle();
+            var item = new ToolStripMenuItem(row.IsShared && !allMode ? $"{row.Name} (shared)" : row.Name)
+            {
+                Checked = row.IsActive,
+                CheckOnClick = false,
+            };
+            if (row.IsShared && !allMode) item.Click += (_, _) => DoSet(!row.IsActive);
+            else item.Click += (_, _) => SwitchOne(row);
             menu.Items.Add(item);
         }
+        menu.Items.Add(BuildSharedMenu(rows, allMode));
 
         menu.Items.Add(new ToolStripSeparator());
 
@@ -384,6 +401,25 @@ internal sealed class TrayApp : ApplicationContext
         Notify($"Couldn't install v{m.Version}: {why}. Still running v{UpdateLogic.CurrentVersion}.", ToolTipIcon.Warning);
     }
 
+    // "Shared monitor ▸": which external left-click, the CLI and the peer handoff switch. Checked = the
+    // resolved one (an explicit choice, or the only external), or "All external monitors" in all mode.
+    // Its items are disposed with the submenu by RebuildMenu.
+    private ToolStripMenuItem BuildSharedMenu(List<DisplayManager.ExternalRow> rows, bool allMode)
+    {
+        var shared = new ToolStripMenuItem("Shared monitor");
+        foreach (var row in rows)
+        {
+            var item = new ToolStripMenuItem(row.Name) { Checked = row.IsShared && !allMode };
+            item.Click += (_, _) => { _manager.ChooseShared(row.Key, row.Name); UpdateIcon(); };
+            shared.DropDownItems.Add(item);
+        }
+        shared.DropDownItems.Add(new ToolStripMenuItem("All external monitors", null, (_, _) => { _manager.ClearShared(); UpdateIcon(); })
+        {
+            Checked = allMode,
+        });
+        return shared;
+    }
+
     // "Choose peer ▸": None (standalone), discovered instances (checked = current peer), then the manual dialog.
     private ToolStripMenuItem BuildChoosePeerMenu()
     {
@@ -487,7 +523,7 @@ internal sealed class TrayApp : ApplicationContext
         bool desired = !peerOn;
         Post(() => QueueSwitch(
             () => _manager.AggregateOn() != desired || _manager.On != desired
-                ? (bool?)_manager.SetAll(desired)   // ran: did it work?
+                ? (bool?)_manager.SetShared(desired)   // ran: did it work?
                 : null,                            // already there: nothing to do
             ran => { if (ran is bool ok) UpdateIcon(ok ? desired : null); }));
     }

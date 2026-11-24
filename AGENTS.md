@@ -14,13 +14,24 @@ Two sibling apps that do the same job on each OS, plus a shared network protocol
   copy), `launch-agent.plist`, `Makefile`, and `Package.swift` + `Tests/` for `make test`
   (details below).
 - **`windows/`** — the Windows system-tray equivalent (C#/.NET WinForms), for a laptop with an
-  internal panel + external monitor. Toggling switches the display **topology** (the same
-  extend/internal modes as Win+P): `DisplayConfig.cs` calls the in-process CCD API
-  `SetDisplayConfig(SDC_TOPOLOGY_EXTEND | INTERNAL)`, with `DisplaySwitch.cs` (spawns
-  `DisplaySwitch.exe`) as a fallback. "On" (extended) = any non-internal CCD target is active
-  (`DisplayTargets.cs`), falling back to the attached count (`NativeDisplay.cs`) when CCD is
-  unavailable. A switch is saved and broadcast only if it worked; for the `DisplaySwitch.exe`
-  fallback that means a re-query confirms the new topology. Self-update: `UpdateLogic.cs` (versions,
+  internal panel + external monitors. Each menu row turns one connected external on or off and
+  leaves the other displays alone: `DisplayConfig.SetTargetActive` edits the active CCD paths and
+  applies them with `SetDisplayConfig(SDC_USE_SUPPLIED_DISPLAY_CONFIG)` (turning off the primary
+  moves the desktop origin, the last active display is never turned off); the path planning is pure
+  and unit-tested in `DisplayPathPlan.cs`. On release the full layout is saved by
+  `ReleasedLayouts.cs` (`%APPDATA%\display-toggle\released-layouts.json`); re-enabling restores it
+  only when the same other displays are active, else places the display right of the desktop at
+  its preferred mode. Saved layouts don't survive a reboot or driver reset (adapter IDs change).
+  `DisplayTargets.All()` lists the connected CCD targets (keyed by monitor device path).
+  Left-click, the peer handoff and `--toggle/--extend/--internal` act on the **shared monitor**
+  (*Shared monitor ▸*, `SharedDisplayKey`); unset, it's the only connected external, and with
+  several they act on all externals through the old topology switch
+  (`SetDisplayConfig(SDC_TOPOLOGY_EXTEND | INTERNAL)`, with `DisplaySwitch.cs` spawning
+  `DisplaySwitch.exe` as a fallback). That resolution is pure and tested in
+  `SharedDisplayLogic.cs`. "On" = the shared target is active (all-mode: any external active,
+  falling back to the attached count, `NativeDisplay.cs`, when CCD is unavailable); a shared
+  monitor that isn't connected uses the saved state. A switch is saved and broadcast only if it
+  worked; for the `DisplaySwitch.exe` fallback that means a re-query confirms the new topology. Self-update: `UpdateLogic.cs` (versions,
   manifest signature/parse, asset hash, installed-copy check, the helper script — pure, tested) and
   `Updater.cs` (HTTP, download + staging, launching the helper). The csproj default version is
   `0.0.0-dev`; releases pass `-p:Version=X.Y.Z`.
@@ -58,7 +69,7 @@ the vectors in `PROTOCOL.md`; both sides also test real links over loopback (Mac
 `Tests/PeerLogicTests/PeerLinkTests.swift`, Windows `DisplayToggle.Tests/PeerLinkTests.cs`).
 See `PROTOCOL.md`.
 
-**Windows threading:** the UI thread never waits on slow work. Topology switches run one at a
+**Windows threading:** the UI thread never waits on slow work. Display switches run one at a
 time on a FIFO worker (`TrayApp.QueueSwitch`), each deciding from live state when it runs, so
 a local toggle and a peer-driven switch can't interleave; peer sends go through a per-connection
 queue drained by a writer task; discovery's `Peers` is a lock-free snapshot, and dnsapi is never
@@ -165,7 +176,7 @@ The Mac app is a menu bar app (`NSApplication` with `.accessory` activation poli
 
 2. **Display discovery** — `CGGetOnlineDisplayList` to enumerate connected displays; `CGDisplayIsBuiltin() == 0` (returns `boolean_t` / `Int32`, not Swift `Bool`) to identify externals.
 
-3. **State persistence** — `UserDefaults(suiteName: "com.display-toggle")`, stored in `~/Library/Preferences/com.display-toggle.plist`. Keys: `on` (Bool), `ids` ([Int] of switched-off `CGDirectDisplayID`s), `displayIdentities` (String(id) → [vendor, model, serial]), `peerHost`/`peerPort`/`peerSecret` for the peer link, `instanceId`/`peerId` for discovery, `peerNone` (Bool) for *Choose peer ▸ None (standalone)*, which stops the link and auto-pick (Windows: `Settings.PeerNone`), and `updateNotified` (String), the last release version we showed an update notification for (Windows: `Settings.LastNotifiedVersion`, kept in memory even when the config is `ReadOnly`). IDs are stored on disable so they can be re-enabled even if the display drops off the online list while software-disabled. A `CGDirectDisplayID` isn't stable (a reboot or OS upgrade can give the same monitor a new one and hand the old one to nothing or another display), so each is saved with its EDID identity, and `currentOffDisplays` re-binds the list when the menu opens and on a toggle-on (the per-display switches act on rows the menu just re-bound): kept if the id still reports that identity, moved to an online external that does, else dropped (an id saved by an older version, with no identity, adopts its id's current one or is dropped if the system no longer knows it). It doesn't run at launch, when an external may not be enumerated yet. `ids` keeps its old meaning so older versions still read it.
+3. **State persistence** — `UserDefaults(suiteName: "com.display-toggle")`, stored in `~/Library/Preferences/com.display-toggle.plist`. Keys: `on` (Bool), `ids` ([Int] of switched-off `CGDirectDisplayID`s), `displayIdentities` (String(id) → [vendor, model, serial]), `peerHost`/`peerPort`/`peerSecret` for the peer link, `instanceId`/`peerId` for discovery, `peerNone` (Bool) for *Choose peer ▸ None (standalone)*, which stops the link and auto-pick (Windows: `Settings.PeerNone`; Windows also stores the shared monitor as `Settings.SharedDisplayKey`/`SharedDisplayName`), and `updateNotified` (String), the last release version we showed an update notification for (Windows: `Settings.LastNotifiedVersion`, kept in memory even when the config is `ReadOnly`). IDs are stored on disable so they can be re-enabled even if the display drops off the online list while software-disabled. A `CGDirectDisplayID` isn't stable (a reboot or OS upgrade can give the same monitor a new one and hand the old one to nothing or another display), so each is saved with its EDID identity, and `currentOffDisplays` re-binds the list when the menu opens and on a toggle-on (the per-display switches act on rows the menu just re-bound): kept if the id still reports that identity, moved to an online external that does, else dropped (an id saved by an older version, with no identity, adopts its id's current one or is dropped if the system no longer knows it). It doesn't run at launch, when an external may not be enumerated yet. `ids` keeps its old meaning so older versions still read it.
 
 4. **AppDelegate** — `NSStatusItem` in `NSStatusBar.system`. Left-click calls `performToggle()`; right-click calls `showMenu()` which sets `statusItem.menu`, calls `performClick`, then clears the menu asynchronously so subsequent left-clicks are not intercepted by it.
 

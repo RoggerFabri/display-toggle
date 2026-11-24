@@ -4,21 +4,37 @@ The Windows counterpart to the macOS menu-bar app, for a **laptop with an intern
 external monitor** (e.g. the shared monitor). It links to a peer instance (the Mac) so the two share
 one physical monitor — see [`../PROTOCOL.md`](../PROTOCOL.md).
 
-- **Left-click** the tray icon → toggle the external monitor on/off.
-- **Right-click** → a checkable toggle row per external monitor (checked = on; every row switches
-  the whole topology), this machine's IP, peer status, *Choose peer ▸*, the version,
+- **Left-click** the tray icon → toggle the **shared monitor** on/off and tell the peer.
+- **Right-click** → a checkable row per connected external monitor (checked = on; each row turns
+  only its own monitor on or off; the shared monitor's row also tells the peer, the others are
+  local only), *Shared monitor ▸*, this machine's IP, peer status, *Choose peer ▸*, the version,
   *Check for updates*, and *Quit*.
 - A **green dot** on the icon means the peer is linked.
 
-Toggling switches the display **topology** — the same extend/internal modes as **Win+P** — via
-the in-process CCD API (`SetDisplayConfig`), with `DisplaySwitch.exe` as a fallback:
+*Shared monitor ▸* lists the external monitors plus *All external monitors*. Left-click, the peer
+handoff and `--toggle` / `--extend` / `--internal` act on the chosen one. Unset, the only connected
+external is the shared monitor; with several, they act on all externals.
 
-- **On** → extend the desktop onto the external monitor (grab it).
-- **Off** → internal panel only; the external loses signal and the Mac can take it over.
+Each monitor is switched on its own through the in-process CCD API (`SetDisplayConfig` with the
+paths supplied), so other displays — e.g. a virtual monitor — stay as they are:
+
+- **On** → the monitor is re-enabled and this machine grabs it. If the same other displays are
+  active as when it was released, the exact layout saved then (positions, primary) comes back;
+  otherwise it is placed right of the desktop at its preferred resolution.
+- **Off** → only that monitor's path is dropped; it loses signal and the Mac can take it over. Its
+  full layout is saved to `%APPDATA%\display-toggle\released-layouts.json` first. If it was the
+  primary display, the desktop origin moves to another display (the internal panel if active). The
+  last active display is never turned off.
+
+Saved layouts don't survive a reboot or a driver reset (the adapter IDs change); the monitor is
+then placed right of the desktop instead.
+
+In *All external monitors* mode the app switches the whole topology instead — the extend/internal
+modes of **Win+P** (`SDC_TOPOLOGY_EXTEND` / `INTERNAL`), with `DisplaySwitch.exe` as a fallback.
 
 ## Requirements
 
-- Windows 10/11 **laptop** (needs an internal panel for the `/internal` state to make sense)
+- Windows 10/11 **laptop** (the internal panel keeps a display on when the shared monitor is released)
 - [.NET 8 SDK](https://dotnet.microsoft.com/download) (to build) — the runtime to run
 
 ## Build & run
@@ -44,10 +60,10 @@ Or directly with the .NET SDK:
 cd windows
 dotnet build -c Release
 ./bin/Release/net8.0-windows/display-toggle.exe            # runs the tray app
-./bin/Release/net8.0-windows/display-toggle.exe --list     # print detected displays, no changes
-./bin/Release/net8.0-windows/display-toggle.exe --toggle   # extend <-> internal-only
-./bin/Release/net8.0-windows/display-toggle.exe --extend   # grab (extend topology)
-./bin/Release/net8.0-windows/display-toggle.exe --internal # release (internal-only topology)
+./bin/Release/net8.0-windows/display-toggle.exe --list     # print displays, CCD targets and the shared one; no changes
+./bin/Release/net8.0-windows/display-toggle.exe --toggle   # toggle the shared monitor
+./bin/Release/net8.0-windows/display-toggle.exe --extend   # grab (shared monitor on)
+./bin/Release/net8.0-windows/display-toggle.exe --internal # release (shared monitor off)
 ./bin/Release/net8.0-windows/display-toggle.exe --quit     # ask the running tray app to exit cleanly
 ./bin/Release/net8.0-windows/display-toggle.exe --discover # list peers visible on the LAN (20 s)
 ```
@@ -74,7 +90,8 @@ can't come up, the peer line says why: *needs update* (the peer runs an older pr
 both apps together), *not authenticated* (its secret is missing or different), or *requires a
 secret* (it has one and this side doesn't).
 
-Config is stored at `%APPDATA%\display-toggle\config.json`, including the secret in plain text. It is
+Config is stored at `%APPDATA%\display-toggle\config.json`, including the secret in plain text and
+the shared monitor (`SharedDisplayKey`, its CCD device path, and `SharedDisplayName`, its label). It is
 saved atomically; a corrupt file is kept as `config.json.bad-<timestamp>` and the app starts on
 defaults, and a file it can't read (e.g. locked) is never overwritten.
 
@@ -138,10 +155,9 @@ login; it isn't restarted if it crashes.
 
 ## Notes
 
-- Built for a **laptop**: toggling flips between extended (external on) and internal-only via
-  the CCD API (`SetDisplayConfig`), with `DisplaySwitch.exe` as a fallback. "On" means an external
-  (non-built-in) monitor is active; the new state is saved and sent to the peer only if the switch
-  worked.
+- Built for a **laptop**: "On" means the shared monitor is active (in *All external monitors*
+  mode: any external monitor). If the shared monitor isn't connected, the last saved state is used.
+  The new state is saved and sent to the peer only if the switch worked.
 - Single-instance: a second launch exits immediately (named mutex).
 - No drivers and no admin rights required (adding the firewall rule during `make install` needs an
   elevated prompt; it uses the configured peer port).

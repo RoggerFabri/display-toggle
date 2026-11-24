@@ -46,9 +46,11 @@ internal static class Program
                     Console.WriteLine("  (no args)     run the system-tray app");
                     Console.WriteLine("  --list        print detected displays and exit");
                     Console.WriteLine("  --discover    browse for peers on the LAN for N seconds (default 20) and print them");
-                    Console.WriteLine("  --toggle      flip between extended (external on) and internal-only");
-                    Console.WriteLine("  --extend      extend onto the external monitor (grab)");
-                    Console.WriteLine("  --internal    internal panel only (release)");
+                    Console.WriteLine("  --toggle      grab or release the shared monitor (tray menu: Shared monitor)");
+                    Console.WriteLine("  --extend      turn the shared monitor on (grab); with several externals and none");
+                    Console.WriteLine("                chosen, extend onto all of them");
+                    Console.WriteLine("  --internal    turn the shared monitor off (release); with several externals and");
+                    Console.WriteLine("                none chosen, internal panel only");
                     Console.WriteLine("  --quit        ask the running tray app to exit cleanly (removes its tray icon)");
                     return 0;
                 default:
@@ -89,6 +91,20 @@ internal static class Program
             Console.WriteLine($"{d.DeviceName,-16} {(d.IsAttached ? "on" : "off"),-4} {(d.IsPrimary ? "yes" : ""),-8} {d.FriendlyName}");
         Console.WriteLine();
         Console.WriteLine($"secondaries: {displays.Count(d => !d.IsPrimary)}");
+
+        // CCD targets (connected monitors, active or not) — what the per-display switching works on.
+        var targets = DisplayTargets.All();
+        string? shared = SharedDisplayLogic.ResolveSharedKey(Settings.Load().SharedDisplayKey, targets);
+        Console.WriteLine();
+        Console.WriteLine($"{"Kind",-9} {"On",-4} {"Shared",-7} Name  [key]");
+        Console.WriteLine(new string('-', 60));
+        foreach (var t in targets)
+        {
+            string key = t.Key.Length > 48 ? t.Key[..48] + "…" : t.Key;
+            Console.WriteLine($"{(t.IsInternal ? "internal" : "external"),-9} {(t.IsActive ? "on" : "off"),-4} {(t.Key == shared ? "yes" : ""),-7} {t.Name}  [{key}]");
+        }
+        Console.WriteLine(shared is null ? "shared: all externals"
+            : targets.Any(t => t.Key == shared) ? "shared: marked above" : $"shared: {shared} (not connected)");
         return 0;
     }
 
@@ -112,7 +128,7 @@ internal static class Program
 
     private static void PrintDisplays(DisplayManager mgr, string when)
     {
-        Console.WriteLine($"{when} (extended={mgr.AggregateOn()}):");
+        Console.WriteLine($"{when} (shared-on={mgr.AggregateOn()}):");
         foreach (var e in mgr.AllDisplays())
             Console.WriteLine($"  {e.DeviceName}  {(e.IsOn ? "on " : "off")}  {(e.IsPrimary ? "[primary] " : "")}{e.FriendlyName}");
     }
@@ -124,7 +140,7 @@ internal static class Program
         using (ev) ev.Set();
         Console.WriteLine($"asked the running tray app to {command.TrimStart('-')}");
         System.Threading.Thread.Sleep(2000); // let the switch land before re-reading
-        Console.WriteLine($"extended-now={new DisplayManager(Settings.Load()).AggregateOn()}");
+        Console.WriteLine($"shared-on-now={new DisplayManager(Settings.Load()).AggregateOn()}");
         return true;
     }
 
@@ -133,8 +149,8 @@ internal static class Program
         if (AskTray("toggle")) return 0;
         var mgr = new DisplayManager(Settings.Load());
         PrintDisplays(mgr, "before");
-        var result = mgr.ToggleAll();
-        Console.WriteLine(result is bool b ? $"toggled → {(b ? "extended (on)" : "internal only (off)")}" : "toggle failed");
+        var result = mgr.ToggleShared();
+        Console.WriteLine(result is bool b ? $"toggled → {(b ? "shared monitor on (grabbed)" : "shared monitor off (released)")}" : "toggle failed");
         System.Threading.Thread.Sleep(1500); // let the topology change land before re-reading
         PrintDisplays(mgr, "after");
         return result is null ? 1 : 0;
@@ -144,9 +160,9 @@ internal static class Program
     {
         if (AskTray(on ? "extend" : "internal")) return 0;
         var mgr = new DisplayManager(Settings.Load());
-        bool ok = mgr.SetAll(on);
+        bool ok = mgr.SetShared(on);
         System.Threading.Thread.Sleep(1500);
-        Console.WriteLine($"{(on ? "extend" : "internal")}: ok={ok}  extended-now={mgr.AggregateOn()}");
+        Console.WriteLine($"{(on ? "grab" : "release")}: ok={ok}  shared-on-now={mgr.AggregateOn()}");
         return ok ? 0 : 1;
     }
 }

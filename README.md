@@ -14,8 +14,9 @@ the display, the other grabs it.
 
 Each app:
 
-- **Left-click** the icon → toggle the external monitor on/off.
-- **Right-click** → a toggle row per external monitor, this machine's IP, peer status,
+- **Left-click** the icon → toggle the external monitor on/off (Windows: the chosen shared monitor).
+- **Right-click** → a toggle row per external monitor (each switches only its own monitor;
+  Windows adds **Shared monitor ▸** to pick the one shared with the other machine), this machine's IP, peer status,
   **Choose peer ▸** (peers found on the LAN, *None (standalone)*, *Set peer manually…*), quit.
 - A **green dot** on the icon means a peer is linked (and, with a shared secret, authenticated).
 
@@ -74,8 +75,10 @@ make test         # unit + loopback tests
 Both machines must run a **v2** build: an older peer is refused and shown as *needs update*, so
 update both together.
 
-The Windows toggle switches the display topology (extend ⇄ internal-only, the same as Win+P) via
-the CCD API, so it's built for a laptop with an internal panel plus the shared external monitor.
+The Windows app switches one monitor at a time through the CCD API, so other displays (e.g. a
+virtual monitor) stay on. It's built for a laptop with an internal panel plus the shared external
+monitor; with several externals and no shared monitor chosen, it falls back to the Win+P
+extend ⇄ internal-only switch for all of them.
 
 ## Releases and updates
 

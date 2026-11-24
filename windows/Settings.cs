@@ -31,8 +31,15 @@ public sealed class Settings
     /// </summary>
     public bool PeerNone { get; set; }
 
-    /// <summary>Last-seen external monitor names, so the toggle row keeps its label while released.</summary>
-    public List<string> ExternalNames { get; set; } = new();
+    /// <summary>
+    /// CCD key (<see cref="DisplayTargets.Target.Key"/>) of the monitor shared with the peer — the one
+    /// left-click, the CLI and peer handoff switch. Empty = auto: the only connected external, or all
+    /// externals when there are several.
+    /// </summary>
+    public string SharedDisplayKey { get; set; } = "";
+
+    /// <summary>Friendly name of <see cref="SharedDisplayKey"/>, so its menu row keeps a label while disconnected.</summary>
+    public string SharedDisplayName { get; set; } = "";
 
     /// <summary>Set once we've warned that there's no built-in panel (non-laptop), so we don't nag.</summary>
     public bool WarnedNoInternal { get; set; }
