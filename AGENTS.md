@@ -98,10 +98,15 @@ and, on a push, releases only if app files changed since that tag (`mac/*.swift`
 `Package.swift`, `mac/Info.plist`/`Makefile`/`launch-agent.plist`, `windows/**` except
 `DisplayToggle.Tests/` and `*.md`). `build-windows` (`dotnet publish -p:Version=…`, zipped flat) and
 `build-macos` (`make dist VERSION=…`, a universal tarball) run the tests and build the assets;
+`build-macos` also runs in the `release` environment: it imports `MACOS_SIGNING_P12` into a temporary
+keychain, so the binary is signed with the self-signed **display-toggle code signing** certificate
+(`mac/scripts/new-signing-identity.sh`; one certificate for every build, so macOS keeps Local
+Network access across updates, and the updater installs it without re-signing), and
+the tarball check fails an ad-hoc build;
 `publish` writes `manifest.json` with `.github/scripts/make-manifest.py` (compact JSON, fixed key
 order, no trailing newline: version, tag, published, notes_url, and per asset name/sha256/size), signs
 those exact bytes with `RELEASE_SIGNING_KEY` (a secret of the `release` environment, which only `main`
-can deploy to; the publish job is the only one that uses it) (ECDSA P-256/SHA-256, raw DER signature →
+can deploy to; the publish job and `build-macos`'s signing step are the only ones that use its secrets) (ECDSA P-256/SHA-256, raw DER signature →
 `manifest.json.sig`), verifies it against `.github/release-signing.pub.pem` (the same public key the
 apps embed), and runs `gh release create` with the two assets + manifest + signature. The apps fetch
 `releases/latest/download/manifest.json(.sig)` and verify the signature before parsing anything.
@@ -122,7 +127,7 @@ macOS — run from `mac/`:
 ```sh
 cd mac
 make                  # compile display-toggle binary (VERSION defaults to 0.0.0-dev)
-make dist VERSION=X.Y.Z  # release asset: universal, ad-hoc signed → mac/dist/display-toggle-macos.tar.gz
+make dist VERSION=X.Y.Z  # release asset: universal, signed with "display-toggle code signing" → mac/dist/display-toggle-macos.tar.gz
 make clean            # remove binary, gen/ and dist/
 make install          # build + install to ~/.local/bin (PREFIX=…) + register launchd agent; no sudo
 make uninstall        # remove binary and launchd agent

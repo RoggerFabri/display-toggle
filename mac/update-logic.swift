@@ -228,13 +228,12 @@ func runsAutomaticUpdateChecks(resolvedPath: String) -> Bool {
 /// The launch agent label `make install` registers.
 func launchAgentLabel(user: String) -> String { "com.\(user).display-toggle" }
 
-/// `osascript` arguments that replace `target` with `staged` and re-sign it, behind the standard
-/// admin prompt. Paths travel as argv and are quoted by AppleScript, so no shell escaping here.
+/// `osascript` arguments that replace `target` with `staged`, behind the standard admin prompt.
+/// Paths travel as argv and are quoted by AppleScript, so no shell escaping here.
 func adminReplaceArguments(staged: String, target: String) -> [String] {
     [
         "-e", "on run argv",
         "-e", "do shell script \"/usr/bin/install -m 755 \" & quoted form of (item 1 of argv) & \" \" & "
-            + "quoted form of (item 2 of argv) & \" && /usr/bin/codesign --sign - --force \" & "
             + "quoted form of (item 2 of argv) with administrator privileges",
         "-e", "end run",
         staged, target,

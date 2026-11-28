@@ -124,6 +124,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.release == 'true'
     runs-on: macos-latest
+    # MACOS_SIGNING_P12(_PASSWORD) are secrets of this environment (main only), like RELEASE_SIGNING_KEY.
+    environment: release
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
@@ -131,9 +133,31 @@ jobs:
       - name: Unit tests
         working-directory: mac
         run: make test
+      - name: Import the code-signing identity
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Every release is signed with the same self-signed certificate (mac/scripts/new-signing-identity.sh),
+          # so macOS keeps a new release's Local Network permission.
+          if [ -z "$MACOS_SIGNING_P12" ] || [ -z "$MACOS_SIGNING_P12_PASSWORD" ]; then
+            echo "::error::MACOS_SIGNING_P12 / MACOS_SIGNING_P12_PASSWORD are not set"; exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          p12="$RUNNER_TEMP/identity.p12"
+          trap 'rm -f "$p12"' EXIT
+          printf '%s' "$MACOS_SIGNING_P12" | base64 --decode > "$p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$p12" -k "$keychain" -P "$MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          echo "SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       - name: Build universal binary tarball
         working-directory: mac
-        run: make dist VERSION="$VERSION"
+        run: make dist VERSION="$VERSION" SIGN_KEYCHAIN="$SIGN_KEYCHAIN" SIGN_IDENTITY="display-toggle code signing"
       - name: Check the tarball
         run: |
           set -euo pipefail
@@ -145,6 +169,9 @@ jobs:
           case " $archs " in *" arm64 "*) ;; *) echo "::error::no arm64 slice ($archs)"; exit 1 ;; esac
           case " $archs " in *" x86_64 "*) ;; *) echo "::error::no x86_64 slice ($archs)"; exit 1 ;; esac
           codesign --verify "$dir/display-toggle"
+          # Signed with the release identity, not ad-hoc (an ad-hoc release would cost every Mac its Local Network permission).
+          codesign -dvv "$dir/display-toggle" 2>&1 | grep -qxF 'Authority=display-toggle code signing' \
+            || { echo "::error::display-toggle isn't signed with \"display-toggle code signing\""; codesign -dvv "$dir/display-toggle"; exit 1; }
       - uses: actions/upload-artifact@v7
         with:
           name: macos

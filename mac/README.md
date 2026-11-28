@@ -83,12 +83,28 @@ fails, the installed copy is left as it was and an alert says why.
 Only the installed copy (`…/bin/display-toggle`) updates itself. A build run from `mac/` points you
 to the release instead: update the checkout and run `make install`.
 
-After an update macOS may ask again for **Local Network** access, because the replaced binary is
-ad-hoc signed and counts as a new app. Allow it, or the peer link stops working.
+Updates keep macOS's **Local Network** permission: every build is signed with the same
+certificate, which macOS recognises as the same app (see *Code signing* below).
 
 Release builds: `make VERSION=X.Y.Z` stamps the version into the embedded Info.plist, and
 `make dist VERSION=X.Y.Z` builds the release asset `dist/display-toggle-macos.tar.gz` (a universal
-arm64 + x86_64 binary for macOS 13+, ad-hoc signed). `display-toggle --version` prints the version.
+arm64 + x86_64 binary for macOS 13+, signed with that certificate). `display-toggle --version`
+prints the version.
+
+## Code signing
+
+macOS keys an app's privacy permissions to its code signature. An ad-hoc signature is a hash of one
+build, so after each rebuild or update **Local Network** access can be asked for again, and the peer
+link stops until it's allowed. So every build is signed with one self-signed certificate,
+**display-toggle code signing**, and the permission granted once holds for later builds. (The
+macOS firewall's *allow incoming connections* rule, by contrast, held across ad-hoc rebuilds when
+tested on macOS 27.2.)
+
+`mac/scripts/new-signing-identity.sh` creates it: it imports the identity into your login keychain,
+for `make install`, and stores it as the `MACOS_SIGNING_P12` / `MACOS_SIGNING_P12_PASSWORD`
+secrets of the `release` environment, for the release workflow. Run it once, and on another Mac
+export the identity from Keychain Access (`.p12`) and import it there. Without it in a keychain,
+`make` signs ad-hoc and says so. A new certificate counts as a new app.
 
 ## Notes
 
@@ -99,7 +115,7 @@ arm64 + x86_64 binary for macOS 13+, ad-hoc signed). `display-toggle --version` 
   its new id; an id that no longer belongs to it is forgotten.
 - Single instance: a second launch exits at once (a lock file in your temp dir).
 - The binary embeds an `Info.plist` (Bonjour service + Local Network usage) instead of being an
-  `.app` bundle, and `make install` ad-hoc signs it.
+  `.app` bundle, and `make install` signs it (see *Code signing*).
 - Logs: `log stream --predicate 'subsystem == "com.display-toggle"'` live, or
   `log show --last 1h --predicate 'subsystem == "com.display-toggle"'` for display switches after
   the fact (each one with its result; the peer link's own lines are live only).

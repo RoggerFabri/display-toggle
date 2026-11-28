@@ -17,6 +17,17 @@ BINPATH    = $(PREFIX)/bin/$(BINARY)
 LEGACY_BINPATH = /usr/local/bin/$(BINARY)
 LABEL      = com.$(LOCAL_USER).display-toggle
 PLIST      = $(USER_HOME)/Library/LaunchAgents/$(LABEL).plist
+# Code signing: one self-signed certificate signs every build (scripts/new-signing-identity.sh), so
+# macOS keeps treating a new build as the same app: Local Network access follows the certificate,
+# not one build's hash. Without it in a keychain the build is ad-hoc signed (each build a
+# new app to macOS). Release CI passes SIGN_KEYCHAIN (a temporary keychain holding the identity).
+SIGN_NAME      = display-toggle code signing
+SIGN_KEYCHAIN ?=
+ifndef SIGN_IDENTITY
+SIGN_IDENTITY := $(if $(shell security find-identity -p codesigning $(SIGN_KEYCHAIN) 2>/dev/null | grep -F '"$(SIGN_NAME)"'),$(SIGN_NAME),-)
+endif
+CODESIGN       = codesign --force --sign '$(SIGN_IDENTITY)' $(if $(SIGN_KEYCHAIN),--keychain '$(SIGN_KEYCHAIN)')
+SIGN_NOTE      = $(if $(filter -,$(SIGN_IDENTITY)),echo "→ ad-hoc signed: \"$(SIGN_NAME)\" isn't in a keychain (scripts/new-signing-identity.sh)",echo "→ signed with \"$(SIGN_IDENTITY)\"")
 
 .PHONY: all build clean install uninstall remove-legacy run test dist FORCE
 
@@ -40,7 +51,7 @@ $(GEN_PLIST): Info.plist $(VERSION_CHANGED)
 	plutil -lint $@
 	echo '$(VERSION)' > $(GEN)/version
 
-# Release asset: a universal (arm64 + x86_64, macOS 13+) ad-hoc signed binary, alone in a tar.gz.
+# Release asset: a universal (arm64 + x86_64, macOS 13+) binary signed with $(SIGN_IDENTITY), alone in a tar.gz.
 #   make dist VERSION=X.Y.Z  →  dist/display-toggle-macos.tar.gz
 dist: $(SOURCES) $(GEN_PLIST)
 	rm -rf $(GEN)/dist dist
@@ -48,7 +59,8 @@ dist: $(SOURCES) $(GEN_PLIST)
 	swiftc $(SOURCES) -O -target arm64-apple-macos13.0 -o $(GEN)/dist/$(BINARY)-arm64 $(EMBED)
 	swiftc $(SOURCES) -O -target x86_64-apple-macos13.0 -o $(GEN)/dist/$(BINARY)-x86_64 $(EMBED)
 	lipo -create -output $(GEN)/dist/$(BINARY) $(GEN)/dist/$(BINARY)-arm64 $(GEN)/dist/$(BINARY)-x86_64
-	codesign --sign - --force $(GEN)/dist/$(BINARY)
+	$(CODESIGN) $(GEN)/dist/$(BINARY)
+	@$(SIGN_NOTE)
 	COPYFILE_DISABLE=1 tar -czf $(DIST_ARCHIVE) -C $(GEN)/dist $(BINARY)
 	@echo "→ $(DIST_ARCHIVE) ($(VERSION), $$(lipo -archs $(GEN)/dist/$(BINARY)))"
 
@@ -66,7 +78,8 @@ install: build
 	-chown -R $(LOCAL_USER) $(BINARY) $(GEN)
 	install -d $(PREFIX)/bin
 	install -m 755 $(BINARY) $(BINPATH)
-	codesign --sign - --force $(BINPATH)
+	$(CODESIGN) $(BINPATH)
+	@$(SIGN_NOTE)
 	@# Under sudo, hand a per-user install back to the user, or updates would need an admin prompt.
 	-@case "$(PREFIX)" in "$(USER_HOME)"/*) chown $(LOCAL_USER) "$(PREFIX)/bin" "$(BINPATH)";; esac
 	mkdir -p "$(USER_HOME)/Library/LaunchAgents"

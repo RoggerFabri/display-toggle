@@ -262,7 +262,9 @@ private func manifest(version: String = "1.2.3", tag: String? = nil, extra: Stri
         let args = adminReplaceArguments(staged: "/tmp/x y/display-toggle", target: "/usr/local/bin/display-toggle")
         #expect(args.suffix(2) == ["/tmp/x y/display-toggle", "/usr/local/bin/display-toggle"])
         #expect(args.filter { $0 == "-e" }.count == 3)
-        #expect(args.contains { $0.contains("with administrator privileges") && $0.contains("codesign --sign - --force") })
+        #expect(args.contains { $0.contains("with administrator privileges") && $0.contains("/usr/bin/install -m 755") })
+        // A re-sign would replace the release's certificate signature with an ad-hoc one.
+        #expect(!args.contains { $0.contains("codesign") })
         #expect(!args.dropLast(2).contains { $0.contains("/tmp/x y") })
     }
 }

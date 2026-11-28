@@ -200,14 +200,14 @@ final class Updater {
             throw UpdateError.failed("the new version didn't start correctly")
         }
 
-        // Replace: directly if we may write there, else behind the standard admin prompt.
+        // Replace: directly if we may write there, else behind the standard admin prompt. No re-signing:
+        // the release is signed with the app's certificate, which keeps its Local Network
+        // permissions, and `install` writes a new file, so the old binary's cached signature can't apply.
         let targetDir = (target as NSString).deletingLastPathComponent
         let fm = FileManager.default
         if fm.isWritableFile(atPath: target), fm.isWritableFile(atPath: targetDir) {
             let inst = runTool("/usr/bin/install", ["-m", "755", staged.path, target], timeout: 60)
             guard inst.status == 0 else { throw UpdateError.failed("couldn't replace the app (\(inst.output))") }
-            let sign = runTool("/usr/bin/codesign", ["--sign", "-", "--force", target], timeout: 60)
-            if sign.status != 0 { log.error("codesign failed: \(sign.output, privacy: .public)") }
         } else {
             let admin = runTool("/usr/bin/osascript", adminReplaceArguments(staged: staged.path, target: target), timeout: 600)
             guard admin.status == 0 else {
