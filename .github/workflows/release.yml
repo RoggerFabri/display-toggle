@@ -154,6 +154,13 @@ jobs:
           security unlock-keychain -p "$keychain_password" "$keychain"
           security import "$p12" -k "$keychain" -P "$MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          # Put it in the user's search list (GitHub's documented recipe): without that, codesign on the
+          # runner reported "no identity found" even with --keychain.
+          # shellcheck disable=SC2046  # the listed paths are quoted words; xargs strips the quotes
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | xargs)
+          security find-identity -p codesigning "$keychain"
+          security find-identity -p codesigning "$keychain" | grep -qF '"display-toggle code signing"' \
+            || { echo "::error::the imported keychain holds no \"display-toggle code signing\" identity"; exit 1; }
           echo "SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       - name: Build universal binary tarball
         working-directory: mac
